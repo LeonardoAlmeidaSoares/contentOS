@@ -11,7 +11,7 @@ Docker + Docker Compose. (Node 20+ apenas para rodar o E2E no host.)
 cp .env.example .env      # opcional; os defaults de dev funcionam
 docker compose up -d --build
 ```
-- Interface (homologação): http://localhost:8300
+- Interface (homologação, LAN): http://192.168.18.2:8300 (IP definido em `WEB_BIND_IP` no `.env`; sem autenticação — nunca expor à internet)
 - API / docs OpenAPI: http://localhost:8301/docs
 - Healthchecks: `/health` (liveness) e `/health/ready` (postgres, redis, minio)
 

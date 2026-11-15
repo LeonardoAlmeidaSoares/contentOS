@@ -68,7 +68,7 @@ services:
 
   frontend:
     build: ./frontend
-    ports: ["127.0.0.1:${WEB_PORT:-8300}:80"]
+    ports: ["${WEB_BIND_IP:-127.0.0.1}:${WEB_PORT:-8300}:80"]
     depends_on:
       api: { condition: service_healthy }
     networks: [internal]
