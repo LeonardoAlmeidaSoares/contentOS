@@ -34,6 +34,7 @@ export function RunDetail() {
   const [tick, setTick] = useState(0);
   const [msg, setMsg] = useState<string | null>(null);
   const { data: run, error } = usePoll(() => api.run(id), [id, tick], 1000, (r) => isActiveRun(r.status));
+  const { data: logs } = usePoll(() => api.runLogs(id), [id, tick, run?.status], 2000, () => !!run && isActiveRun(run.status));
   const act = async (fn: () => Promise<unknown>) => {
     setMsg(null);
     try { await fn(); setTick((t) => t + 1); } catch (e) { setMsg((e as Error).message); }
@@ -78,11 +79,20 @@ export function RunDetail() {
           ))}
         </ol>
       </Card>
+      <Card title="Logs">
+        {logs && logs.length === 0 && <p className="text-sm text-slate-500">Sem registros.</p>}
+        <ul className="max-h-72 space-y-1 overflow-auto font-mono text-xs" data-testid="logs">
+          {logs?.map((l, i) => (
+            <li key={i} className={l.level === "error" ? "text-red-600" : l.level === "warn" ? "text-amber-700" : "text-slate-600"}>
+              <span className="text-slate-400">{new Date(l.created_at).toLocaleTimeString("pt-BR")}</span> {l.step_name ? `[${l.step_name}] ` : ""}{l.message}</li>
+          ))}
+        </ul>
+      </Card>
       <Card title="Artefatos">
         {run.artifacts.length === 0 && <p className="text-sm text-slate-500">Nenhum artefato gerado ainda.</p>}
         {run.artifacts.map((a) => (
           <div key={a.id} className="flex items-center justify-between gap-3 text-sm">
-            <span>{a.filename} <span className="text-slate-400">({size(a.size)})</span></span>
+            <span>{a.filename} <span className="text-slate-400">({size(a.size)}{a.model ? ` · ${a.provider} / ${a.model}` : ""})</span></span>
             <a href={api.downloadUrl(a.id)} data-testid="download" className={btn}>Baixar</a>
           </div>
         ))}

@@ -8,3 +8,4 @@ __pycache__/
 test-results/
 playwright-report/
 .cache/
+.auth.json

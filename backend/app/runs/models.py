@@ -36,6 +36,7 @@ class ProductionLine(Base):
     backoff_seconds: Mapped[int] = mapped_column(Integer, default=5)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
     runs: Mapped[list["Run"]] = relationship(back_populates="line")
@@ -53,7 +54,8 @@ class Run(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     line_id: Mapped[str | None] = mapped_column(ForeignKey("production_lines.id"), nullable=True, index=True)
     pipeline: Mapped[str] = mapped_column(String(64))
-    trigger: Mapped[str] = mapped_column(String(16), default="manual")  # manual|schedule
+    trigger: Mapped[str] = mapped_column(String(16), default="manual")  # manual|schedule|lab
+    config: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # snapshot da config usada (idempotência em retomadas)
     # queued|running|retrying|succeeded|failed|cancelled
     status: Mapped[str] = mapped_column(String(16), default="queued")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -108,6 +110,20 @@ class Artifact(Base):
     content_type: Mapped[str] = mapped_column(String(128))
     size: Mapped[int] = mapped_column(BigInteger)
     storage_key: Mapped[str] = mapped_column(String(512))
+    provider: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
     run: Mapped[Run] = relationship(back_populates="artifacts")
+
+
+class RunLog(Base):
+    __tablename__ = "run_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), index=True)
+    step_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    level: Mapped[str] = mapped_column(String(8), default="info")  # info|warn|error
+    message: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

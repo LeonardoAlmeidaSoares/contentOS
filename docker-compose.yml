@@ -9,6 +9,10 @@ x-backend: &backend
     MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-contentos}
     MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-contentos_dev_pw}
     MINIO_BUCKET: ${MINIO_BUCKET:-contentos-artifacts}
+    ADMIN_TOKEN: ${ADMIN_TOKEN:?defina ADMIN_TOKEN no .env}
+    CREDENTIALS_KEY: ${CREDENTIALS_KEY:?defina CREDENTIALS_KEY no .env}
+    LAB_MONTH_LIMIT_USD: ${LAB_MONTH_LIMIT_USD:-10}
+  extra_hosts: ["host.docker.internal:host-gateway"]  # acesso ao Ollama no host
   depends_on:
     postgres: { condition: service_healthy }
     redis: { condition: service_healthy }

@@ -1,10 +1,14 @@
 import { useState } from "react";
-import { NavLink, Route, Routes } from "react-router-dom";
+import { api } from "./api";
+import { AuthGate } from "./components/AuthGate";
+import { Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { LineDetail } from "./pages/LineDetail";
 import { LineForm } from "./pages/LineForm";
 import { Lines } from "./pages/Lines";
+import { ExperimentView, LabBenchmark, LabHistory, LabImages, LabLayout, LabText } from "./pages/Lab";
 import { Library } from "./pages/Library";
 import { Overview } from "./pages/Overview";
+import { ProviderDetail, ProviderForm, Providers } from "./pages/Providers";
 import { RunDetail, Runs } from "./pages/Runs";
 import { Unavailable } from "./ui";
 
@@ -14,10 +18,15 @@ const nav = [
   { to: "/execucoes", label: "Execuções" },
   { to: "/biblioteca", label: "Biblioteca" },
   { to: "/provedores", label: "Provedores" },
+  { to: "/laboratorio", label: "Laboratório" },
   { to: "/configuracoes", label: "Configurações" },
 ];
 
 export default function App() {
+  return <AuthGate><Shell /></AuthGate>;
+}
+
+function Shell() {
   const [open, setOpen] = useState(false);
   return (
     <div className="min-h-screen md:flex">
@@ -35,6 +44,8 @@ export default function App() {
             </NavLink>
           ))}
         </nav>
+        <button className="mx-3 mb-4 rounded-lg px-3 py-2 text-left text-sm text-slate-500 hover:bg-slate-100" data-testid="logout"
+          onClick={async () => { await api.logout(); window.dispatchEvent(new Event("unauthorized")); }}>Sair</button>
       </aside>
       <main className="min-w-0 flex-1 p-4 md:p-8">
         <div className="mx-auto max-w-4xl">
@@ -47,7 +58,18 @@ export default function App() {
             <Route path="/execucoes" element={<Runs />} />
             <Route path="/execucoes/:id" element={<RunDetail />} />
             <Route path="/biblioteca" element={<Library />} />
-            <Route path="/provedores" element={<Unavailable title="Provedores" text="Adaptadores de modelos de linguagem, imagem, áudio, vídeo, armazenamento e publicação ainda não foram implementados." />} />
+            <Route path="/provedores" element={<Providers />} />
+            <Route path="/provedores/novo" element={<ProviderForm />} />
+            <Route path="/provedores/:id" element={<ProviderDetail />} />
+            <Route path="/provedores/:id/editar" element={<ProviderForm />} />
+            <Route path="/laboratorio" element={<LabLayout />}>
+              <Route index element={<Navigate to="imagens" replace />} />
+              <Route path="imagens" element={<LabImages />} />
+              <Route path="texto" element={<LabText />} />
+              <Route path="benchmark" element={<LabBenchmark />} />
+              <Route path="experimentos" element={<LabHistory />} />
+              <Route path="experimentos/:id" element={<ExperimentView />} />
+            </Route>
             <Route path="/configuracoes" element={<Unavailable title="Configurações" text="As configurações da plataforma ainda não estão disponíveis. Por ora, use o arquivo .env." />} />
           </Routes>
         </div>

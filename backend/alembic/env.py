@@ -3,6 +3,8 @@ from sqlalchemy import create_engine
 
 from app.core.config import settings
 from app.core.db import Base
+from app.lab import models as _lab  # noqa: F401
+from app.providers import models as _prov  # noqa: F401
 from app.runs import models  # noqa: F401
 
 target_metadata = Base.metadata

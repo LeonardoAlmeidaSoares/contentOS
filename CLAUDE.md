@@ -12,7 +12,9 @@ Fábrica automatizada de conteúdo digital (não uma ferramenta de assistência)
 - Executor (`runs/executor.py`): claim atômico (`queued|retrying` → `running`), pula etapas `succeeded`, checa cancelamento e orçamento antes de cada etapa, retry com backoff devolvendo o delay (a task reenfileira com `countdown`). Regras de negócio em `runs/service.py`; agendador em `runs/tasks.tick` (Celery beat).
 - Exclusividade: índice único parcial `uq_runs_one_active_per_line`; novos fluxos de criação de run devem passar por `service.start_run`.
 - Custos em USD (Numeric); linha tem `cost_limit_run` e `cost_limit_month` (null = sem limite).
-- Providers (futuro): fluxos nunca importam SDKs de fornecedores de IA diretamente; sempre via interface em `providers/`.
+- Providers (`app/providers`): adaptadores HTTP independentes em `adapters/` (sem SDKs de fornecedor) + `gateway.py`. **Pipelines só usam `ctx.ai`** (AIGateway): estimativa → reserva (advisory lock, ledger `ai_usage`) → chamada → conciliação; idempotência por chave (`ctx.ai_key(...)`); incerto nunca repete; custo desconhecido só com `allow_unknown_cost` (nunca em pipelines automáticos). Orçamentos: provedor/mês, linha/execução, linha/mês, Laboratório/mês. Gasto da run = `service.run_spent` (etapas concluídas + ledger das demais).
+- Laboratório (`app/lab`): cada resultado = uma `Run` (trigger `lab`, pipeline interno `lab`, sem linha) → reaproveita fila, retry e logs. Nunca invente endpoints/preços de provedores: consulte a documentação oficial e registre em `docs/PROVIDERS.md`.
+- Segurança: `core/auth.py` (middleware: tudo em `/api` exige sessão/Bearer, exceto health e login), `core/crypto.py` (Fernet). Nunca logar corpos/headers de provedores; erros passam por `scrub`.
 - Artefatos: bytes no MinIO, metadados no Postgres, download via API (MinIO não é exposto).
 
 ## Regras

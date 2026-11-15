@@ -14,10 +14,22 @@ async function createLine(page: Page, name: string, config: object, extra: Recor
 
 test("menu inicial e áreas indisponíveis", async ({ page }) => {
   await page.goto("/");
-  for (const l of ["Visão Geral", "Linhas de Produção", "Execuções", "Biblioteca", "Provedores", "Configurações"])
+  for (const l of ["Visão Geral", "Linhas de Produção", "Execuções", "Biblioteca", "Provedores", "Laboratório", "Configurações"])
     await expect(page.getByRole("link", { name: l })).toBeVisible();
-  await page.getByRole("link", { name: "Provedores" }).click();
+  await page.getByRole("link", { name: "Configurações" }).click();
   await expect(page.getByText("Ainda não disponível")).toBeVisible();
+});
+
+test.describe("sem sessão", () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+  test("exige login e recusa token inválido", async ({ page }) => {
+    await page.goto("/provedores");
+    await expect(page.getByTestId("login-token")).toBeVisible();
+    await page.getByTestId("login-token").fill("token-errado-123456");
+    await page.getByTestId("login-submit").click();
+    await expect(page.getByTestId("login-error")).toBeVisible();
+    expect((await page.request.get("/api/providers")).status()).toBe(401);
+  });
 });
 
 test("linha: criar, ativar, executar, acompanhar e baixar artefato", async ({ page }) => {
@@ -60,4 +72,21 @@ test("orçamento mensal bloqueia nova execução", async ({ page }) => {
   await page.getByRole("link", { name: /←/ }).click();
   await page.getByTestId("run-line").click();
   await expect(page.getByTestId("action-error")).toContainText("mensal");
+});
+
+test("linha: arquivar preserva histórico e exibe logs da execução", async ({ page }) => {
+  const name = `Arq ${uid()}`;
+  await createLine(page, name, { step_delay: 0.1 });
+  await page.getByTestId("toggle-line").click();
+  await page.getByTestId("run-line").click();
+  await expect(page.getByText("Concluída").first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("logs")).toContainText("etapa iniciada");
+  await page.getByRole("link", { name: /←/ }).click();
+  await page.getByTestId("archive-line").click();
+  await expect(page.getByText(/Linha arquivada/)).toBeVisible();
+  await expect(page.getByTestId("run-row")).toHaveCount(1);
+  await page.goto("/linhas");
+  await expect(page.getByText(name)).toHaveCount(0);
+  await page.getByTestId("show-archived").check();
+  await expect(page.getByText(name)).toBeVisible();
 });

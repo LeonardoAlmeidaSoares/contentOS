@@ -10,7 +10,7 @@ from app.core.db import get_db
 from app.core.storage import get_storage
 from app.pipelines.registry import PIPELINES, load_all
 from app.runs import service, tasks
-from app.runs.models import ACTIVE_STATUSES, Artifact, ProductionLine, Run
+from app.runs.models import ACTIVE_STATUSES, Artifact, ProductionLine, Run, RunLog, now
 
 load_all()
 router = APIRouter(prefix="/api", tags=["engine"])
@@ -40,6 +40,9 @@ class ArtifactOut(BaseModel):
     filename: str
     content_type: str
     size: int
+    provider: str | None
+    model: str | None
+    meta: dict | None
     created_at: datetime
 
 
@@ -80,7 +83,7 @@ class LineIn(BaseModel):
     @field_validator("pipeline")
     @classmethod
     def _known(cls, v):
-        if v not in PIPELINES:
+        if v not in PIPELINES or PIPELINES[v].internal:
             raise ValueError(f"pipeline desconhecido: {v}")
         return v
 
@@ -111,6 +114,7 @@ class LineOut(BaseModel):
     backoff_seconds: int
     last_run_at: datetime | None
     next_run_at: datetime | None
+    archived_at: datetime | None
     created_at: datetime
     # agregados
     cost_month: float = 0
@@ -174,13 +178,16 @@ def _conflict(fn, *a):
 def pipelines():
     return [PipelineOut(name=p.name, label=p.label, description=p.description,
                         default_config=p.default_config, steps=[s.name for s in p.steps])
-            for p in PIPELINES.values()]
+            for p in PIPELINES.values() if not p.internal]
 
 
 # ---------- lines ----------
 @router.get("/lines", response_model=list[LineOut])
-def list_lines(db: Session = Depends(get_db)):
-    return [line_out(db, ln) for ln in db.scalars(select(ProductionLine).order_by(ProductionLine.created_at))]
+def list_lines(include_archived: bool = False, db: Session = Depends(get_db)):
+    q = select(ProductionLine).order_by(ProductionLine.created_at)
+    if not include_archived:
+        q = q.where(ProductionLine.archived_at.is_(None))
+    return [line_out(db, ln) for ln in db.scalars(q)]
 
 
 @router.post("/lines", response_model=LineOut, status_code=201)
@@ -199,6 +206,8 @@ def get_line(line_id: str, db: Session = Depends(get_db)):
 @router.patch("/lines/{line_id}", response_model=LineOut)
 def update_line(line_id: str, body: LinePatch, db: Session = Depends(get_db)):
     line = _line(db, line_id)
+    if line.archived_at:
+        raise HTTPException(409, "linha arquivada: desarquive para editar")
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(line, k, v)
     if "interval_minutes" in body.model_fields_set:
@@ -210,6 +219,8 @@ def update_line(line_id: str, body: LinePatch, db: Session = Depends(get_db)):
 @router.post("/lines/{line_id}/activate", response_model=LineOut)
 def activate(line_id: str, db: Session = Depends(get_db)):
     line = _line(db, line_id)
+    if line.archived_at:
+        raise HTTPException(409, "linha arquivada")
     line.active = True
     service.schedule_next(line)
     db.commit()
@@ -225,6 +236,25 @@ def deactivate(line_id: str, db: Session = Depends(get_db)):
     return line_out(db, line)
 
 
+@router.post("/lines/{line_id}/archive", response_model=LineOut)
+def archive(line_id: str, db: Session = Depends(get_db)):
+    """Arquiva preservando todo o histórico; exige que não haja execução ativa."""
+    line = _line(db, line_id)
+    if db.scalar(select(func.count(Run.id)).where(Run.line_id == line.id, Run.status.in_(ACTIVE_STATUSES))):
+        raise HTTPException(409, "há execução ativa: cancele ou aguarde antes de arquivar")
+    line.active, line.next_run_at, line.archived_at = False, None, now()
+    db.commit()
+    return line_out(db, line)
+
+
+@router.post("/lines/{line_id}/unarchive", response_model=LineOut)
+def unarchive(line_id: str, db: Session = Depends(get_db)):
+    line = _line(db, line_id)
+    line.archived_at = None
+    db.commit()
+    return line_out(db, line)
+
+
 @router.post("/lines/{line_id}/run", response_model=RunOut, status_code=201)
 def run_line(line_id: str, db: Session = Depends(get_db)):
     run = _conflict(service.start_run, db, _line(db, line_id), "manual")
@@ -234,8 +264,10 @@ def run_line(line_id: str, db: Session = Depends(get_db)):
 
 # ---------- runs ----------
 @router.get("/runs", response_model=list[RunSummary])
-def list_runs(line_id: str | None = None, db: Session = Depends(get_db)):
+def list_runs(line_id: str | None = None, include_lab: bool = False, db: Session = Depends(get_db)):
     q = select(Run).order_by(Run.created_at.desc()).limit(100)
+    if not include_lab:
+        q = q.where(Run.trigger != "lab")
     if line_id:
         q = q.where(Run.line_id == line_id)
     return [run_summary(r) for r in db.scalars(q)]
@@ -247,6 +279,19 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
     if not run:
         raise HTTPException(404, "execução não encontrada")
     return run_full(run)
+
+
+class LogOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    step_name: str | None
+    level: str
+    message: str
+    created_at: datetime
+
+
+@router.get("/runs/{run_id}/logs", response_model=list[LogOut])
+def run_logs(run_id: str, db: Session = Depends(get_db)):
+    return db.scalars(select(RunLog).where(RunLog.run_id == run_id).order_by(RunLog.created_at, RunLog.id)).all()
 
 
 @router.post("/runs/{run_id}/cancel", response_model=RunOut)
@@ -271,9 +316,9 @@ def list_artifacts(line_id: str | None = None, db: Session = Depends(get_db)):
 
 
 @router.get("/artifacts/{artifact_id}/download")
-def download(artifact_id: str, db: Session = Depends(get_db)):
+def download(artifact_id: str, inline: bool = False, db: Session = Depends(get_db)):
     art = db.get(Artifact, artifact_id)
     if not art:
         raise HTTPException(404, "artefato não encontrado")
     return Response(get_storage().get(art.storage_key), media_type=art.content_type,
-                    headers={"Content-Disposition": f'attachment; filename="{art.filename}"'})
+                    headers={"Content-Disposition": f'{"inline" if inline else "attachment"}; filename="{art.filename}"'})

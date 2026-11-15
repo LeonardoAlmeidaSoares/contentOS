@@ -26,17 +26,20 @@ export function LineDetail() {
         <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-semibold" data-testid="line-title">{line.name}</h1>
-            <Badge status={line.active ? "active" : "inactive"} />
+            <Badge status={line.archived_at ? "archived" : line.active ? "active" : "inactive"} />
           </div>
           <div className="flex flex-wrap gap-2">
-            <button className={btnPrimary} data-testid="run-line" disabled={!line.active || !!line.active_run}
+            <button className={btnPrimary} data-testid="run-line" disabled={!line.active || !!line.active_run || !!line.archived_at}
               title={!line.active ? "Ative a linha para executar" : line.active_run ? "Já existe execução ativa" : ""}
               onClick={() => act(() => api.runLine(id), (r) => nav(`/execucoes/${r.id}`))}>Executar agora</button>
-            <button className={btn} data-testid="toggle-line" onClick={() => act(() => api.lineAction(id, line.active ? "deactivate" : "activate"))}>
+            <button className={btn} data-testid="toggle-line" disabled={!!line.archived_at} onClick={() => act(() => api.lineAction(id, line.active ? "deactivate" : "activate"))}>
               {line.active ? "Desativar" : "Ativar"}</button>
-            <Link className={btn} to={`/linhas/${id}/editar`}>Editar</Link>
+            {!line.archived_at && <Link className={btn} to={`/linhas/${id}/editar`}>Editar</Link>}
+            <button className={btn} data-testid="archive-line" onClick={() => act(() => api.lineAction(id, line.archived_at ? "unarchive" : "archive"))}>
+              {line.archived_at ? "Desarquivar" : "Arquivar"}</button>
           </div>
         </div>
+        {line.archived_at && <p className="mt-2 text-sm text-slate-500">Linha arquivada em {fmt(line.archived_at)}; o histórico foi preservado.</p>}
         {line.description && <p className="mt-1 text-sm text-slate-500">{line.description}</p>}
         {msg && <p className="mt-2 text-sm text-red-600" data-testid="action-error">{msg}</p>}
       </div>
@@ -78,7 +81,7 @@ export function LineDetail() {
         <ul className="divide-y divide-slate-100">
           {arts?.map((a) => (
             <li key={a.id} className="flex items-center justify-between gap-3 py-2 text-sm">
-              <span>{a.filename} <span className="text-slate-400">({size(a.size)} · {fmt(a.created_at)})</span></span>
+              <span>{a.filename} <span className="text-slate-400">({size(a.size)} · {fmt(a.created_at)}{a.model ? ` · ${a.provider} / ${a.model}` : ""})</span></span>
               <a className={btn} href={api.downloadUrl(a.id)}>Baixar</a>
             </li>
           ))}

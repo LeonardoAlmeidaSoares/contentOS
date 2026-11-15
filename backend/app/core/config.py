@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     minio_bucket: str = "contentos-artifacts"
     minio_secure: bool = False
     stale_run_minutes: int = 15
+    admin_token: str = ""          # proteção administrativa mínima (obrigatório; >= 12 caracteres)
+    credentials_key: str = ""      # chave Fernet para criptografar credenciais de provedores
+    lab_month_limit_usd: float = 10.0  # teto mensal de gastos do Laboratório
 
 
 settings = Settings()

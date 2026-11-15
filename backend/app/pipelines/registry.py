@@ -11,7 +11,11 @@ from typing import Callable
 class OutFile:
     filename: str
     content_type: str
-    data: bytes
+    data: bytes = b""
+    storage_key: str | None = None  # já armazenado (ex.: imagem gerada por IA): o executor só registra o artefato
+    provider: str | None = None
+    model: str | None = None
+    meta: dict | None = None
 
 
 @dataclass
@@ -25,9 +29,19 @@ class StepResult:
 @dataclass
 class StepContext:
     run_id: str
+    step: str
     config: dict
     previous: dict[str, dict]  # saídas das etapas já concluídas, por nome
     attempt: int  # tentativas totais desta etapa (1 = primeira)
+    ai: object | None = None  # AIGateway (providers/gateway.py): única porta para provedores de IA
+    logs: list = field(default_factory=list)
+
+    def log(self, message: str, level: str = "info") -> None:
+        self.logs.append((level, message))
+
+    def ai_key(self, suffix: str) -> str:
+        """Chave de idempotência estável por run/etapa/chamada: retries não geram cobrança duplicada."""
+        return f"{self.run_id}:{self.step}:{suffix}"
 
 
 @dataclass
@@ -43,6 +57,7 @@ class Pipeline:
     description: str
     default_config: dict
     steps: list[Step]
+    internal: bool = False  # pipelines internos (ex.: laboratório) não aparecem para linhas
 
 
 PIPELINES: dict[str, Pipeline] = {}
@@ -54,4 +69,4 @@ def register(p: Pipeline) -> Pipeline:
 
 
 def load_all() -> None:
-    from app.pipelines import demo  # noqa: F401  (registra ao importar)
+    from app.pipelines import demo, lab  # noqa: F401  (registram ao importar)
