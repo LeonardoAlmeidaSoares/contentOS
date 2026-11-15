@@ -1,36 +1,25 @@
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import { usePoll } from "../hooks";
-import { Badge, Card, dur, fmt, size } from "../ui";
+import { Badge, Card, Progress, btn, dur, fmt, isActiveRun, money, size } from "../ui";
 
 export function Runs() {
-  const nav = useNavigate();
-  const [busy, setBusy] = useState(false);
-  const { data: runs, error } = usePoll(api.runs, [], 2000);
-  const start = async () => {
-    setBusy(true);
-    try { nav(`/execucoes/${(await api.startRun()).id}`); } finally { setBusy(false); }
-  };
+  const { data: runs, error } = usePoll(() => api.runs(), [], 2000);
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold">Execuções</h1>
-        <button onClick={start} disabled={busy} data-testid="start-run"
-          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50">
-          Iniciar execução de demonstração
-        </button>
-      </div>
+      <h1 className="text-2xl font-semibold">Execuções</h1>
+      <p className="text-sm text-slate-500">Execuções são iniciadas a partir de uma <Link to="/linhas" className="text-blue-600 underline">linha de produção</Link>.</p>
       {error && <p className="text-sm text-red-600">Falha ao carregar execuções.</p>}
       <Card>
         {runs && runs.length === 0 && <p className="text-sm text-slate-500">Nenhuma execução ainda.</p>}
         <ul className="divide-y divide-slate-100">
           {runs?.map((r) => (
             <li key={r.id}>
-              <Link to={`/execucoes/${r.id}`} className="flex items-center justify-between gap-3 py-3 text-sm hover:bg-slate-50">
-                <span><span className="font-mono text-xs text-slate-500">{r.id.slice(0, 8)}</span> · {r.pipeline}
-                  <span className="ml-2 text-slate-400">{fmt(r.created_at)}</span></span>
-                <Badge status={r.status} />
+              <Link to={`/execucoes/${r.id}`} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm hover:bg-slate-50">
+                <span><span className="font-mono text-xs text-slate-500">{r.id.slice(0, 8)}</span> · {r.line_name ?? r.pipeline}
+                  <span className="ml-2 text-slate-400">{fmt(r.created_at)} · {money(r.cost)}</span></span>
+                <span className="flex items-center gap-3"><Progress done={r.steps_done} total={r.steps_total} /><Badge status={r.status} /></span>
               </Link>
             </li>
           ))}
@@ -42,29 +31,49 @@ export function Runs() {
 
 export function RunDetail() {
   const { id = "" } = useParams();
-  const { data: run, error } = usePoll(() => api.run(id), [id], 1000, (r) => r.status === "queued" || r.status === "running");
+  const [tick, setTick] = useState(0);
+  const [msg, setMsg] = useState<string | null>(null);
+  const { data: run, error } = usePoll(() => api.run(id), [id, tick], 1000, (r) => isActiveRun(r.status));
+  const act = async (fn: () => Promise<unknown>) => {
+    setMsg(null);
+    try { await fn(); setTick((t) => t + 1); } catch (e) { setMsg((e as Error).message); }
+  };
   if (error && !run) return <p className="text-sm text-red-600">Execução não encontrada.</p>;
   if (!run) return <p className="text-sm text-slate-500">Carregando…</p>;
   return (
     <div className="space-y-6">
       <div>
-        <Link to="/execucoes" className="text-sm text-blue-600 hover:underline">← Execuções</Link>
-        <div className="mt-2 flex items-center gap-3">
-          <h1 className="text-2xl font-semibold">Execução <span className="font-mono text-lg">{run.id.slice(0, 8)}</span></h1>
-          <Badge status={run.status} />
+        <Link to={run.line_id ? `/linhas/${run.line_id}` : "/execucoes"} className="text-sm text-blue-600 hover:underline">← {run.line_name ?? "Execuções"}</Link>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-semibold">Execução <span className="font-mono text-lg">{run.id.slice(0, 8)}</span></h1>
+            <Badge status={run.status} />
+          </div>
+          <div className="flex gap-2">
+            {isActiveRun(run.status) && <button className={btn} data-testid="cancel-run" disabled={run.cancel_requested} onClick={() => act(() => api.cancel(id))}>
+              {run.cancel_requested ? "Cancelando…" : "Cancelar"}</button>}
+            {(run.status === "failed" || run.status === "cancelled") && <button className={btn} data-testid="resume-run" onClick={() => act(() => api.resume(id))}>Retomar</button>}
+          </div>
         </div>
-        <p className="mt-1 text-xs text-slate-500">Criada em {fmt(run.created_at)} · duração {dur(run.started_at, run.finished_at)}</p>
-        {run.error && <p className="mt-2 text-sm text-red-600">{run.error}</p>}
+        <p className="mt-1 text-xs text-slate-500">Criada em {fmt(run.created_at)} · {run.trigger === "schedule" ? "agendada" : "manual"} · duração {dur(run.started_at, run.finished_at)} · custo {money(run.cost)}</p>
+        {run.error && <p className="mt-2 text-sm text-red-600" data-testid="run-error">{run.error}</p>}
+        {msg && <p className="mt-2 text-sm text-red-600">{msg}</p>}
       </div>
       <Card title="Etapas">
         <ol className="space-y-3">
           {run.steps.map((s) => (
-            <li key={s.position} data-testid="step" className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 p-3 text-sm">
-              <div>
-                <div className="font-medium">{s.position}. {s.name}</div>
-                <div className="text-xs text-slate-500">{s.message ?? "—"} · {dur(s.started_at, s.finished_at)}</div>
+            <li key={s.position} data-testid="step" className="rounded-lg border border-slate-200 p-3 text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="font-medium">{s.position}. {s.name}</div>
+                  <div className="text-xs text-slate-500">{s.message ?? "—"} · {dur(s.started_at, s.finished_at)} · {money(s.cost)}{s.total_attempts > 1 ? ` · ${s.total_attempts} tentativas` : ""}</div>
+                </div>
+                <Badge status={s.status} />
               </div>
-              <Badge status={s.status} />
+              {s.output && (
+                <details className="mt-2"><summary className="cursor-pointer text-xs text-slate-500">Entrada / saída</summary>
+                  <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-2 text-xs">{JSON.stringify({ input: s.input, output: s.output }, null, 2)}</pre></details>
+              )}
             </li>
           ))}
         </ol>
@@ -74,7 +83,7 @@ export function RunDetail() {
         {run.artifacts.map((a) => (
           <div key={a.id} className="flex items-center justify-between gap-3 text-sm">
             <span>{a.filename} <span className="text-slate-400">({size(a.size)})</span></span>
-            <a href={api.downloadUrl(a.id)} data-testid="download" className="rounded-lg border border-slate-300 px-3 py-1.5 hover:bg-slate-50">Baixar</a>
+            <a href={api.downloadUrl(a.id)} data-testid="download" className={btn}>Baixar</a>
           </div>
         ))}
       </Card>

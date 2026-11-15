@@ -21,12 +21,21 @@ Para parar: `docker compose down` (acrescente `-v` para apagar os dados).
 ## Testes
 ```bash
 docker compose run --rm --no-deps api python -m pytest -q   # backend
-cd e2e && npm install && npx playwright install chromium && npx playwright test   # E2E (stack no ar)
+cd e2e && npm install && npx playwright install chromium && BASE_URL=http://192.168.18.2:8300 npx playwright test   # E2E (stack no ar; BASE_URL = WEB_BIND_IP:WEB_PORT)
 ```
 
-## Fluxo de demonstração
-Execuções → "Iniciar execução de demonstração": 3 etapas em background (Celery), progresso persistido no Postgres,
-arquivo `demo-output.json` salvo no MinIO e disponível para download. Não usa APIs pagas.
+## Motor de produção (Fase 1)
+- **Linhas de produção** (menu Linhas de Produção): nome, pipeline, config JSON, frequência (minutos), limites de custo
+  (por execução e mensal), retry (tentativas + backoff exponencial), ativar/desativar, executar agora, editar.
+- **Execuções**: etapas sequenciais com entrada/saída/custo persistidos; retry automático; **Retomar** continua da etapa
+  que falhou sem repetir as concluídas; **Cancelar** é seguro (a etapa em curso termina, a próxima não inicia).
+- **Duplicidade**: índice único no banco permite só uma execução ativa por linha.
+- **Agendamento**: serviço `beat` verifica a cada 30 s as linhas ativas vencidas. Execuções `running` sem heartbeat há 15 min são marcadas como falhas (retomáveis).
+- **Orçamento**: antes de cada etapa, bloqueia se o limite da execução ou do mês foi atingido (custos não são desfeitos; ajuste o limite e retome).
+- Pipeline `demo` (sem custo real) aceita `items`, `step_delay`, `cost_per_step`, `fail_step`, `fail_attempts` para validar o motor.
+
+**MinIO:** a imagem está fixada por digest (RELEASE.2025-09-07T16-13-09Z) porque o MinIO não publica mais tags em registros públicos.
+Backup local (não versionado) em `.cache/minio-image.tar`; restaurar com `docker load -i .cache/minio-image.tar`.
 
 ## Estrutura
 ```

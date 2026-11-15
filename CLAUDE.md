@@ -8,7 +8,10 @@ Fábrica automatizada de conteúdo digital (não uma ferramenta de assistência)
 - Pin importante: `celery 5.4` + `kombu 5.4.2` + `redis-py 5.2.1` (kombu ≥5.5 exige redis-py ≥6).
 - Domínios em `backend/app/`: `core` (config, db, storage), `runs` (execuções, etapas, artefatos, executor, tasks), `pipelines` (uma linha de produção por módulo), `health`.
   Domínios futuros (providers, analytics, agendamento, custos) só são criados quando houver o primeiro caso de uso real.
-- Pipelines: lista de etapas `(nome, função)` registrada em `runs/executor.PIPELINES`. O executor persiste estado a cada etapa e é idempotente (só executa runs em `queued`).
+- Pipelines: registrados em `pipelines/registry.py` (`register(Pipeline(...))`; importar o módulo em `load_all`). Etapa = `fn(StepContext) -> StepResult(output, cost, files)`; **a etapa não acessa banco/storage** — o executor persiste saída, custo e arquivos (uploads idempotentes), garantindo que retry/retomada não dupliquem efeitos nem custos.
+- Executor (`runs/executor.py`): claim atômico (`queued|retrying` → `running`), pula etapas `succeeded`, checa cancelamento e orçamento antes de cada etapa, retry com backoff devolvendo o delay (a task reenfileira com `countdown`). Regras de negócio em `runs/service.py`; agendador em `runs/tasks.tick` (Celery beat).
+- Exclusividade: índice único parcial `uq_runs_one_active_per_line`; novos fluxos de criação de run devem passar por `service.start_run`.
+- Custos em USD (Numeric); linha tem `cost_limit_run` e `cost_limit_month` (null = sem limite).
 - Providers (futuro): fluxos nunca importam SDKs de fornecedores de IA diretamente; sempre via interface em `providers/`.
 - Artefatos: bytes no MinIO, metadados no Postgres, download via API (MinIO não é exposto).
 

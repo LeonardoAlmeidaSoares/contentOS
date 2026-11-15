@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
+import { LineDetail } from "./pages/LineDetail";
+import { LineForm } from "./pages/LineForm";
+import { Lines } from "./pages/Lines";
 import { Library } from "./pages/Library";
 import { Overview } from "./pages/Overview";
 import { RunDetail, Runs } from "./pages/Runs";
@@ -37,7 +40,10 @@ export default function App() {
         <div className="mx-auto max-w-4xl">
           <Routes>
             <Route path="/" element={<Overview />} />
-            <Route path="/linhas" element={<Unavailable title="Linhas de Produção" text="O cadastro e a configuração de linhas de produção (ex.: livros de colorir para KDP) serão implementados nas próximas etapas." />} />
+            <Route path="/linhas" element={<Lines />} />
+            <Route path="/linhas/nova" element={<LineForm />} />
+            <Route path="/linhas/:id" element={<LineDetail />} />
+            <Route path="/linhas/:id/editar" element={<LineForm />} />
             <Route path="/execucoes" element={<Runs />} />
             <Route path="/execucoes/:id" element={<RunDetail />} />
             <Route path="/biblioteca" element={<Library />} />

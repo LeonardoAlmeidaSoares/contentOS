@@ -1,7 +1,7 @@
 # Roadmap
 
 0. **Fundação (feito)** — infra, API, worker, MinIO, UI base, pipeline demo.
-1. **Core de execução** — cadastro de linhas de produção, retry/backoff, pausa/retomada, agendamento (Celery beat), logs operacionais, registro de custos.
+1. **Motor básico (feito)** — linhas, retry/backoff, retomada, cancelamento, agendamento, orçamento. Pendente: pausa explícita, exclusão de linhas, logs operacionais por etapa, alertas.
 2. **Providers** — interfaces (LLM, imagem, áudio, vídeo, storage, publicação) com implementações fake + primeiro real, configuráveis por linha.
 3. **Pipeline Colorir KDP** — pesquisa de nicho → tema → prompts → ilustrações → validação de qualidade → capa → diagramação (PDF) → metadados. Publicação apenas por meios permitidos pela Amazon (provavelmente semi-manual).
 4. **Analytics** — custos, receita, rentabilidade por linha.

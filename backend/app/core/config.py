@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     minio_secret_key: str = "contentos_dev_pw"
     minio_bucket: str = "contentos-artifacts"
     minio_secure: bool = False
+    stale_run_minutes: int = 15
 
 
 settings = Settings()

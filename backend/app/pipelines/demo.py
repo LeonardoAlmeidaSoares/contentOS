@@ -1,51 +1,51 @@
-"""Pipeline técnico de demonstração: valida fila, worker, banco e MinIO sem APIs pagas."""
+"""Pipeline técnico de demonstração: valida fila, worker, banco, MinIO, retry e custos sem APIs pagas."""
 import json
 import time
-from dataclasses import dataclass
-from typing import Callable
 
-from sqlalchemy.orm import Session
+from app.pipelines.registry import OutFile, Pipeline, Step, StepContext, StepResult, register
 
-from app.core.storage import Storage
-from app.runs.models import Artifact, Run
-
-
-@dataclass
-class Ctx:
-    db: Session
-    run: Run
-    storage: Storage
-    data: dict
-    delay: float = 2.0
+DEFAULT_CONFIG = {
+    "items": 5,             # quantidade de itens gerados
+    "step_delay": 2.0,      # segundos simulados por etapa
+    "cost_per_step": 0.0,   # custo simulado (USD) por etapa — para testar orçamento
+    "fail_step": None,      # nome da etapa que deve falhar (teste de retry/retomada)
+    "fail_attempts": 0,     # quantas tentativas totais dessa etapa falham antes de ter sucesso
+}
 
 
-def prepare(ctx: Ctx) -> str:
-    time.sleep(ctx.delay)
-    ctx.data["items"] = [f"item-{i}" for i in range(1, 6)]
-    return f"{len(ctx.data['items'])} itens preparados"
+def _common(ctx: StepContext, name: str) -> float:
+    cfg = {**DEFAULT_CONFIG, **ctx.config}
+    time.sleep(float(cfg["step_delay"]))
+    if cfg["fail_step"] == name and ctx.attempt <= int(cfg["fail_attempts"]):
+        raise RuntimeError(f"falha simulada em '{name}' (tentativa {ctx.attempt})")
+    return float(cfg["cost_per_step"])
 
 
-def process(ctx: Ctx) -> str:
-    time.sleep(ctx.delay)
-    ctx.data["processed"] = [i.upper() for i in ctx.data["items"]]
-    return f"{len(ctx.data['processed'])} itens processados"
+def prepare(ctx: StepContext) -> StepResult:
+    cost = _common(ctx, "prepare")
+    n = int({**DEFAULT_CONFIG, **ctx.config}["items"])
+    items = [f"item-{i}" for i in range(1, n + 1)]
+    return StepResult({"items": items}, cost, message=f"{n} itens preparados")
 
 
-def package(ctx: Ctx) -> str:
-    time.sleep(ctx.delay)
-    payload = {"run_id": ctx.run.id, "pipeline": "demo", "items": ctx.data["processed"]}
-    body = json.dumps(payload, indent=2, ensure_ascii=False).encode()
-    key = f"runs/{ctx.run.id}/demo-output.json"
-    ctx.storage.put(key, body, "application/json")
-    ctx.db.add(
-        Artifact(run_id=ctx.run.id, filename="demo-output.json", content_type="application/json",
-                 size=len(body), storage_key=key)
-    )
-    return f"arquivo gerado e armazenado ({len(body)} bytes)"
+def process(ctx: StepContext) -> StepResult:
+    cost = _common(ctx, "process")
+    processed = [i.upper() for i in ctx.previous["prepare"]["items"]]
+    return StepResult({"processed": processed}, cost, message=f"{len(processed)} itens processados")
 
 
-STEPS: list[tuple[str, Callable[[Ctx], str]]] = [
-    ("prepare", prepare),
-    ("process", process),
-    ("package", package),
-]
+def package(ctx: StepContext) -> StepResult:
+    cost = _common(ctx, "package")
+    body = json.dumps({"run_id": ctx.run_id, "pipeline": "demo", "items": ctx.previous["process"]["processed"]},
+                      indent=2, ensure_ascii=False).encode()
+    return StepResult({"filename": "demo-output.json", "bytes": len(body)}, cost,
+                      [OutFile("demo-output.json", "application/json", body)],
+                      f"arquivo gerado ({len(body)} bytes)")
+
+
+register(Pipeline(
+    name="demo", label="Demonstração técnica",
+    description="3 etapas simuladas que geram um JSON. Sem custo real; parâmetros de falha/custo para testes.",
+    default_config=DEFAULT_CONFIG,
+    steps=[Step("prepare", prepare), Step("process", process), Step("package", package)],
+))
