@@ -1,0 +1,82 @@
+name: contentos
+
+x-backend: &backend
+  build: ./backend
+  environment: &backend-env
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-contentos}:${POSTGRES_PASSWORD:-contentos_dev_pw}@postgres:5432/${POSTGRES_DB:-contentos}
+    REDIS_URL: redis://redis:6379/0
+    MINIO_ENDPOINT: minio:9000
+    MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-contentos}
+    MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-contentos_dev_pw}
+    MINIO_BUCKET: ${MINIO_BUCKET:-contentos-artifacts}
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+    minio: { condition: service_healthy }
+  networks: [internal]
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-contentos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-contentos_dev_pw}
+      POSTGRES_DB: ${POSTGRES_DB:-contentos}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-contentos}"]
+      interval: 3s
+      retries: 20
+    networks: [internal]
+
+  redis:
+    image: redis:7-alpine
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      retries: 20
+    networks: [internal]
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-contentos}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-contentos_dev_pw}
+    volumes: [miniodata:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
+      retries: 20
+    networks: [internal]
+
+  api:
+    <<: *backend
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    ports: ["127.0.0.1:${API_PORT:-8301}:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 3s
+      retries: 30
+
+  worker:
+    <<: *backend
+    command: celery -A app.celery_app.celery worker --loglevel=INFO --concurrency=2
+    depends_on:
+      api: { condition: service_healthy }
+
+  frontend:
+    build: ./frontend
+    ports: ["127.0.0.1:${WEB_PORT:-8300}:80"]
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [internal]
+
+networks:
+  internal:
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
