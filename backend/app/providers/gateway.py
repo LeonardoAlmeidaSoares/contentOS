@@ -147,7 +147,15 @@ class AIGateway:
             except IntegrityError:
                 db.rollback()
                 raise UncertainDuplicate("chamada duplicada com a mesma chave de idempotência") from None
-            usage_id, secret = usage.id, (crypto.decrypt(prov.credentials_enc) if prov.credentials_enc else None)
+            usage_id = usage.id
+            if prov.credentials_enc:
+                secret = crypto.decrypt(prov.credentials_enc)
+            elif prov.service == "gemini" and (prov.config or {}).get("key_source") == "env":
+                secret = settings.gemini_api_key or None  # chave só em variável de ambiente
+            else:
+                secret = None
+            if secret is None and ADAPTERS[prov.service].needs_key:
+                raise Unsupported("chave de API não configurada para este provedor")
             conn = Conn(prov.service, (prov.base_url or ADAPTERS[prov.service].default_base_url or "").rstrip("/"),
                         secret, dict(prov.config or {}))
             prov_name = prov.name

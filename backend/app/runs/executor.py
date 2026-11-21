@@ -73,7 +73,7 @@ def execute_run(db: Session, run_id: str, storage: Storage) -> int | None:
         db.commit()
 
         gateway.step_name = step.name
-        ctx = StepContext(run.id, step.name, config, previous, step.total_attempts, ai=gateway)
+        ctx = StepContext(run.id, step.name, config, previous, step.total_attempts, ai=gateway, storage=storage)
         try:
             result = step_def.fn(ctx)
             for f in result.files:  # upload idempotente (mesma chave em retomadas)

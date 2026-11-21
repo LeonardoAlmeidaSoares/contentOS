@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core import crypto
 from app.core.db import get_db
 from app.providers.adapters import ADAPTERS
@@ -164,7 +165,8 @@ def patch(pid: str, body: ProviderPatch, db: Session = Depends(get_db)):
 @router.post("/{pid}/activate", response_model=ProviderOut)
 def activate(pid: str, db: Session = Depends(get_db)):
     p = _get(db, pid)
-    if ADAPTERS[p.service].needs_key and not p.credentials_enc:
+    if ADAPTERS[p.service].needs_key and not p.credentials_enc and not (
+            p.service == "gemini" and (p.config or {}).get("key_source") == "env" and settings.gemini_api_key):
         raise HTTPException(409, "cadastre a credencial antes de ativar")
     p.active = True
     db.commit()
@@ -185,10 +187,12 @@ def test_connection(pid: str, db: Session = Depends(get_db)):
     p = _get(db, pid)
     ad = ADAPTERS[p.service]
     secret = crypto.decrypt(p.credentials_enc) if p.credentials_enc else None
+    if not secret and p.service == "gemini" and (p.config or {}).get("key_source") == "env":
+        secret = settings.gemini_api_key or None
     conn = Conn(p.service, (p.base_url or ad.default_base_url or "").rstrip("/"), secret, dict(p.config or {}))
     try:
         if ad.needs_key and not secret:
-            raise ProviderError("credencial não cadastrada")
+            raise ProviderError("GEMINI_API_KEY não configurada no servidor" if p.service == "gemini" else "credencial não cadastrada")
         msg = ad.test(conn)
         p.status, p.status_message = "ok", msg
         if p.service == "ollama" and not p.models:  # descobre os modelos instalados

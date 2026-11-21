@@ -31,3 +31,9 @@ Pontos não verificados na documentação (tratados de forma conservadora):
 1. `backend/app/providers/adapters/<nome>.py` com uma subclasse de `Adapter` (`test`, `estimate`, `text`/`image`) e `known_models` (preços da doc).
 2. Registrar em `adapters/__init__.py`; testar com `httpx.MockTransport` (ver `tests/test_providers.py`).
 3. Pipelines **nunca** chamam adaptadores: usam `ctx.ai` (gateway), que aplica estimativa, reserva, idempotência e conciliação.
+
+## Estúdio de vídeos (Missão 1)
+- **Gemini (texto)**: `POST {base}/models/{model}:generateContent` (header `x-goog-api-key`), `responseMimeType=application/json`, uso em `usageMetadata`. Modelo padrão `gemini-3.1-flash-lite` (o `gemini-2.5-flash` retorna 404 "no longer available to new users"). Custo registrado como 0 — vale só para chave de projeto sem faturamento. Chave: `GEMINI_API_KEY`. Validado contra a API real em 2026-11-21.
+- **Wikimedia Commons** (`commons.wikimedia.org/w/api.php`, sem chave): só licenças livres (PD/CC0/CC BY/CC BY-SA); atribuição em `metadados.json`.
+- **Pexels** (opcional, `PEXELS_API_KEY`, gratuita).
+- **Piper** (voz `pt_BR-faber-medium`, rhasspy/piper-voices) e **eSpeak NG**: locais, sem custo.

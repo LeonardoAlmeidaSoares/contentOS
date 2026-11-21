@@ -4,6 +4,8 @@ os.environ["DATABASE_URL"] = "sqlite://"
 os.environ["ADMIN_TOKEN"] = "test-admin-token-123456"
 os.environ["CREDENTIALS_KEY"] = "ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2oNgqRdU0="  # chave fixa só para testes
 os.environ["LAB_MONTH_LIMIT_USD"] = "10"
+os.environ["STALE_RUN_MINUTES"] = "15"
+os.environ["GEMINI_API_KEY"] = ""
 
 import pytest
 from fastapi.testclient import TestClient

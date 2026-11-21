@@ -25,6 +25,30 @@ export type Line = {
 };
 export type LineInput = Partial<Omit<Line, "id" | "created_at" | "active" | "last_run_at" | "next_run_at" | "archived_at" | "cost_month" | "cost_total" | "products" | "active_run" | "last_run">> & { name: string; pipeline: string };
 export type Pipeline = { name: string; label: string; description: string; default_config: Record<string, unknown>; steps: string[] };
+export type StudioStatus = {
+  gemini: { configured: boolean; model: string; help: string };
+  images: { wikimedia: boolean; pexels: boolean; help: string };
+  voice: { engines: string[] }; ffmpeg: boolean;
+};
+export type PreviewRow = { label: string; value: string };
+export type Proposal = { config: Record<string, unknown>; preview: PreviewRow[] };
+export type ChatReply = { status: "need_info" | "ready"; message: string; questions: string[]; proposal: Proposal | null; usage: { input_tokens: number | null; output_tokens: number | null; cost: number } };
+export type ChatMsg = { role: "user" | "assistant"; content: string };
+export type FactoryDetail = { id: string; config: Record<string, unknown>; preview: PreviewRow[]; active: boolean; interval_minutes: number | null };
+export type Publication = { id: string; status: string; title: string; privacy: string; channel_title: string | null; video_id: string | null; url: string | null; error: string | null; created_at: string; finished_at: string | null; progress: number };
+export type ReviewStatus = "pending" | "approved" | "changes_requested" | "rejected";
+export type ApprovalItem = {
+  run_id: string; factory_id: string | null; factory_name: string | null; title: string; duration_seconds: number | null; created_at: string;
+  video_artifact_id: string | null; thumbnail_artifact_id: string | null;
+  review: { status: ReviewStatus; note: string; decided_at: string | null }; publication: Publication | null;
+};
+export type ApprovalDetail = ApprovalItem & {
+  defaults: { title: string; description: string; tags: string[] }; blockers: string[]; can_publish: boolean; channel: { title: string } | null;
+  events: { at: string; text: string; level: string }[]; publications: Publication[]; scenes: number; words: number | null;
+  subtitles_artifact_id: string | null; has_credits: boolean;
+};
+export type YouTubeStatus = { configured: boolean; help: string; status: "unconfigured" | "pending" | "connected" | "revoked"; channel: { id: string; title: string } | null; message: string | null; connected_at: string | null; redirect_uri: string; scopes: string[] };
+export type PublishInput = { title: string; description: string; tags: string[]; made_for_kids: boolean; privacy: "private"; confirm: true };
 export type Ready = { status: string; checks: Record<string, string> };
 
 export type ModelCfg = {
@@ -109,6 +133,23 @@ export const api = {
   cancel: (id: string) => post<Run>(`/api/runs/${id}/cancel`),
   resume: (id: string) => post<Run>(`/api/runs/${id}/resume`),
   artifacts: (lineId?: string) => get<Artifact[]>(`/api/artifacts${lineId ? `?line_id=${lineId}` : ""}`),
+  studioStatus: () => get<StudioStatus>("/api/studio/status"),
+  chat: (messages: ChatMsg[]) => post<ChatReply>("/api/studio/chat", { messages }),
+  createFactory: (config: Record<string, unknown>) => post<{ id: string }>("/api/studio/factories", { config }),
+  factory: (id: string) => get<FactoryDetail>(`/api/studio/factories/${id}`),
+  adjustFactory: (id: string, instruction: string) => post<ChatReply>(`/api/studio/factories/${id}/adjust`, { instruction }),
+  applyFactory: (id: string, config: Record<string, unknown>) => call<FactoryDetail>("PUT", `/api/studio/factories/${id}`, { config }),
+  produce: (id: string, b: { topic: string; script_text: string }) => post<Run>(`/api/studio/factories/${id}/produce`, b),
+  approvals: (status: string) => get<ApprovalItem[]>(`/api/approvals?status=${status}`),
+  approval: (id: string) => get<ApprovalDetail>(`/api/approvals/${id}`),
+  decide: (id: string, decision: "approve" | "request_changes" | "reject", note: string) => post<ApprovalDetail>(`/api/approvals/${id}/decision`, { decision, note }),
+  publish: (id: string, b: PublishInput) => post<Publication>(`/api/approvals/${id}/publish`, b),
+  resumePublication: (id: string) => post<Publication>(`/api/publications/${id}/resume`),
+  ytStatus: () => get<YouTubeStatus>("/api/youtube/status"),
+  ytConnect: () => post<{ auth_url: string }>("/api/youtube/connect"),
+  ytCallback: (redirect_url: string) => post<YouTubeStatus>("/api/youtube/callback", { redirect_url }),
+  ytCheck: () => post<YouTubeStatus>("/api/youtube/check"),
+  ytDisconnect: () => post<YouTubeStatus>("/api/youtube/disconnect"),
   ready: () => get<Ready>("/api/health/ready"),
   downloadUrl: (id: string) => `/api/artifacts/${id}/download`,
   imageUrl: (id: string) => `/api/artifacts/${id}/download?inline=1`,

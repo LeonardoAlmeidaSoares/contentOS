@@ -13,6 +13,15 @@ class Settings(BaseSettings):
     admin_token: str = ""          # proteção administrativa mínima (obrigatório; >= 12 caracteres)
     credentials_key: str = ""      # chave Fernet para criptografar credenciais de provedores
     lab_month_limit_usd: float = 10.0  # teto mensal de gastos do Laboratório
+    gemini_api_key: str = ""       # chave da Gemini API (variável de ambiente GEMINI_API_KEY; nunca persistida)
+    gemini_text_model: str = "gemini-3.1-flash-lite"  # modelo com camada gratuita; troque por env se necessário
+    pexels_api_key: str = ""       # opcional: fonte de imagens (gratuita, requer chave)
+    media_user_agent: str = "ContentOS/1.0 (internal studio)"
+    tts_piper_model: str = "/opt/piper/pt_BR-faber-medium.onnx"
+
+    youtube_client_id: str = ""      # cliente OAuth do tipo "App para computador" (Google Cloud)
+    youtube_client_secret: str = ""
+    youtube_redirect_uri: str = "http://127.0.0.1:8302/"  # loopback: nada escuta; o PO copia a URL do navegador
 
 
 settings = Settings()

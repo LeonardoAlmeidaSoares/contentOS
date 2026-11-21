@@ -12,6 +12,12 @@ x-backend: &backend
     ADMIN_TOKEN: ${ADMIN_TOKEN:?defina ADMIN_TOKEN no .env}
     CREDENTIALS_KEY: ${CREDENTIALS_KEY:?defina CREDENTIALS_KEY no .env}
     LAB_MONTH_LIMIT_USD: ${LAB_MONTH_LIMIT_USD:-10}
+    GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    GEMINI_TEXT_MODEL: ${GEMINI_TEXT_MODEL:-gemini-3.1-flash-lite}
+    PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+    YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID:-}
+    YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET:-}
+    STALE_RUN_MINUTES: 90  # montagem de vídeo longa não emite heartbeat
   extra_hosts: ["host.docker.internal:host-gateway"]  # acesso ao Ollama no host
   depends_on:
     postgres: { condition: service_healthy }

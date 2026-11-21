@@ -35,6 +35,10 @@ class StepContext:
     attempt: int  # tentativas totais desta etapa (1 = primeira)
     ai: object | None = None  # AIGateway (providers/gateway.py): única porta para provedores de IA
     logs: list = field(default_factory=list)
+    storage: object | None = None  # somente leitura: etapas leem artefatos de etapas anteriores; quem grava é o executor
+
+    def read(self, key: str) -> bytes:
+        return self.storage.get(key)
 
     def log(self, message: str, level: str = "info") -> None:
         self.logs.append((level, message))
@@ -69,4 +73,4 @@ def register(p: Pipeline) -> Pipeline:
 
 
 def load_all() -> None:
-    from app.pipelines import demo, lab  # noqa: F401  (registram ao importar)
+    from app.pipelines import demo, lab, video  # noqa: F401  (registram ao importar)

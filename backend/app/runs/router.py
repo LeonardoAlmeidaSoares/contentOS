@@ -1,7 +1,8 @@
+import re
 from datetime import datetime
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -316,9 +317,20 @@ def list_artifacts(line_id: str | None = None, db: Session = Depends(get_db)):
 
 
 @router.get("/artifacts/{artifact_id}/download")
-def download(artifact_id: str, inline: bool = False, db: Session = Depends(get_db)):
+def download(artifact_id: str, request: Request, inline: bool = False, db: Session = Depends(get_db)):
     art = db.get(Artifact, artifact_id)
     if not art:
         raise HTTPException(404, "artefato não encontrado")
-    return Response(get_storage().get(art.storage_key), media_type=art.content_type,
-                    headers={"Content-Disposition": f'{"inline" if inline else "attachment"}; filename="{art.filename}"'})
+    data = get_storage().get(art.storage_key)
+    headers = {"Content-Disposition": f'{"inline" if inline else "attachment"}; filename="{art.filename}"',
+               "Accept-Ranges": "bytes"}
+    m = re.match(r"bytes=(\d*)-(\d*)$", request.headers.get("range", ""))  # necessário para reprodução/seek de vídeo
+    if m and (m.group(1) or m.group(2)):
+        total = len(data)
+        start = int(m.group(1)) if m.group(1) else max(0, total - int(m.group(2)))
+        end = min(int(m.group(2)), total - 1) if m.group(1) and m.group(2) else total - 1
+        if start >= total or start > end:
+            return Response(status_code=416, headers={"Content-Range": f"bytes */{total}"})
+        headers["Content-Range"] = f"bytes {start}-{end}/{total}"
+        return Response(data[start:end + 1], status_code=206, media_type=art.content_type, headers=headers)
+    return Response(data, media_type=art.content_type, headers=headers)

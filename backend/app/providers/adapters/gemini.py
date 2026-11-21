@@ -9,7 +9,15 @@ RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9"]
 
 
 def _headers(conn: Conn) -> dict:
+    if conn.config.get("api") == "generate_content":  # API estável v1beta (generateContent)
+        return {"x-goog-api-key": conn.api_key or ""}
     return {"x-goog-api-key": conn.api_key or "", "Api-Revision": API_REVISION}
+
+
+def free_text_models() -> list[dict]:
+    """Modelos com camada gratuita (custo 0 enquanto a chave não tiver faturamento ativo)."""
+    return [{"id": m, "capabilities": ["text"], "active": True, "note": "camada gratuita (US$ 0 sem faturamento)",
+             "pricing": {"input_per_mtok": 0, "output_per_mtok": 0}} for m in ("gemini-2.5-flash", "gemini-2.5-flash-lite")]
 
 
 def _img(sizes: dict, refs: int, extra=None) -> dict:
@@ -70,7 +78,35 @@ class GeminiAdapter(Adapter):
         return [c for s in j.get("steps", []) if s.get("type") == "model_output"
                 for c in s.get("content", []) if c.get("type") == kind]
 
+    def _text_generate_content(self, conn, model, req: TextRequest, mcfg):
+        gen = {"maxOutputTokens": req.max_tokens}
+        if model.startswith("gemini-2.5") and "pro" not in model:
+            gen["thinkingConfig"] = {"thinkingBudget": 0}  # evita gastar o teto de saída (e tokens) com raciocínio interno
+        if req.json_mode:
+            gen["responseMimeType"] = "application/json"
+        body = {"contents": [{"role": "user", "parts": [{"text": req.prompt}]}], "generationConfig": gen}
+        if req.system:
+            body["systemInstruction"] = {"parts": [{"text": req.system}]}
+        j = request("POST", f"{conn.base_url}/models/{model}:generateContent", headers=_headers(conn), json=body).json()
+        cands = j.get("candidates") or []
+        if not cands:
+            reason = (j.get("promptFeedback") or {}).get("blockReason", "sem candidatos")
+            raise ProviderError(f"resposta bloqueada ou vazia ({reason})")
+        c = cands[0]
+        text = "".join(p.get("text", "") for p in (c.get("content") or {}).get("parts", []))
+        if not text:
+            raise ProviderError(f"resposta vazia (finishReason={c.get('finishReason')})")
+        if c.get("finishReason") == "MAX_TOKENS":
+            raise ProviderError("resposta truncada (limite de tokens); reduza o tamanho pedido")
+        u = j.get("usageMetadata") or {}
+        in_t, out_t = u.get("promptTokenCount"), (u.get("candidatesTokenCount") or 0) + (u.get("thoughtsTokenCount") or 0)
+        cost = token_text_actual(mcfg, in_t, out_t)
+        return AIResult(model, text=text, input_tokens=in_t, output_tokens=out_t, cost_actual=cost,
+                        cost_source="computed", request_id=j.get("responseId"), usage_raw=u or None)
+
     def text(self, conn, model, req: TextRequest, mcfg):
+        if conn.config.get("api") == "generate_content":
+            return self._text_generate_content(conn, model, req, mcfg)
         body = {"model": model, "input": req.prompt, "store": False,
                 "generation_config": {"max_output_tokens": req.max_tokens}}  # temperature é ignorado nos modelos novos
         if req.system:

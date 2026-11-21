@@ -41,6 +41,7 @@ class TextRequest:
     prompt: str
     system: str | None = None
     max_tokens: int = 1024
+    json_mode: bool = False
 
 
 @dataclass
