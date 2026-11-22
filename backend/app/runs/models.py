@@ -54,7 +54,10 @@ class Run(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     line_id: Mapped[str | None] = mapped_column(ForeignKey("production_lines.id"), nullable=True, index=True)
     pipeline: Mapped[str] = mapped_column(String(64))
-    trigger: Mapped[str] = mapped_column(String(16), default="manual")  # manual|schedule|lab
+    trigger: Mapped[str] = mapped_column(String(16), default="manual")  # manual|schedule|lab|pilot
+    standard_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # padrão do canal usado (rastreabilidade)
+    standard_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    format: Mapped[str | None] = mapped_column(String(16), nullable=True)  # horizontal|vertical
     config: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # snapshot da config usada (idempotência em retomadas)
     # queued|running|retrying|succeeded|failed|cancelled
     status: Mapped[str] = mapped_column(String(16), default="queued")

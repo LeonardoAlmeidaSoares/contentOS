@@ -253,7 +253,8 @@ export function FactoryInside() {
   return (
     <div className="space-y-6">
       <div><Link to="/fabricas" className="text-sm text-cyan-300 hover:underline">← Minhas Fábricas</Link>
-        <h1 className="mt-1 text-2xl font-semibold" data-testid="factory-name">{line.name}</h1></div>
+        <h1 className="mt-1 text-2xl font-semibold" data-testid="factory-name">{line.name}</h1>
+        <Link to={`/canais/${id}`} className="text-sm text-cyan-300 hover:underline" data-testid="open-channel">Abrir Centro do Canal (padrão versionado) →</Link></div>
       <SetupNotice st={st ?? null} />
       <div className="grid gap-6 lg:grid-cols-5">
         <div className="space-y-6 lg:col-span-3">

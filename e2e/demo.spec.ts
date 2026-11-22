@@ -15,7 +15,7 @@ async function createLine(page: Page, name: string, config: object, extra: Recor
 test("menu inicial e áreas indisponíveis", async ({ page }) => {
   await page.goto("/");
   for (const l of ["Visão Geral", "Linhas de Produção", "Execuções", "Biblioteca", "Provedores", "Laboratório", "Aprovações", "Configurações"])
-    await expect(page.getByRole("link", { name: l })).toBeVisible();
+    await expect(page.getByRole("link", { name: l === "Laboratório" ? /^Laboratório$/ : l })).toBeVisible();
   await page.getByRole("link", { name: "Configurações" }).click();
   await expect(page.getByRole("heading", { name: "YouTube" })).toBeVisible();
 });

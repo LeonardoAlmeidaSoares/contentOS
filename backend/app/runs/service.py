@@ -55,7 +55,7 @@ def schedule_next(line: ProductionLine, base: datetime | None = None) -> None:
 
 
 def start_run(db: Session, line: ProductionLine, trigger: str = "manual", overrides: dict | None = None,
-              require_active: bool = True) -> Run:
+              require_active: bool = True, base_config: dict | None = None, standard: tuple[str, int] | None = None) -> Run:
     if line.archived_at is not None:
         raise Conflict("linha arquivada")
     if require_active and not line.active:
@@ -63,7 +63,9 @@ def start_run(db: Session, line: ProductionLine, trigger: str = "manual", overri
     if line.cost_limit_month is not None and month_cost(db, line.id) >= line.cost_limit_month:
         raise Conflict("limite de custo mensal atingido")
     pipeline = PIPELINES[line.pipeline]
-    run = Run(line_id=line.id, pipeline=line.pipeline, trigger=trigger, config={**line.config, **(overrides or {})})
+    cfg = {**(base_config if base_config is not None else line.config), **(overrides or {})}
+    run = Run(line_id=line.id, pipeline=line.pipeline, trigger=trigger, config=cfg, format=cfg.get("format") or None,
+              standard_id=standard[0] if standard else None, standard_version=standard[1] if standard else None)
     run.steps = [RunStep(position=i, name=s.name) for i, s in enumerate(pipeline.steps, start=1)]
     line.last_run_at = now()
     db.add(run)

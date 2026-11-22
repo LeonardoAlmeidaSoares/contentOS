@@ -12,12 +12,14 @@ import { ProviderDetail, ProviderForm, Providers } from "./pages/Providers";
 import { RunDetail, Runs } from "./pages/Runs";
 import { ApprovalDetailPage, Approvals, Settings } from "./approvals";
 import { VoiceLab } from "./voices";
+import { ChannelCenter, NewChannel } from "./channels";
 import { CreateFactory, FactoryInside, Factories, Home, Production } from "./studio";
 
 const nav = [
   { to: "/", label: "Início", icon: "🏠" },
   { to: "/fabricas", label: "Minhas Fábricas", icon: "🏭" },
   { to: "/fabricas/nova", label: "Criar Fábrica com IA", icon: "✨" },
+  { to: "/canais/novo", label: "Criar Canal (padrão)", icon: "📺" },
   { to: "/vozes", label: "Laboratório de Vozes", icon: "🎙️" },
   { to: "/aprovacoes", label: "Aprovações", icon: "✅" },
   { to: "/configuracoes", label: "Configurações", icon: "⚙️" },
@@ -68,6 +70,8 @@ function Shell() {
             <Route path="/fabricas" element={<Factories />} />
             <Route path="/fabricas/nova" element={<CreateFactory />} />
             <Route path="/fabricas/:id" element={<FactoryInside />} />
+            <Route path="/canais/novo" element={<NewChannel />} />
+            <Route path="/canais/:id" element={<ChannelCenter />} />
             <Route path="/producao/:id" element={<Production />} />
             <Route path="/vozes" element={<VoiceLab />} />
             <Route path="/aprovacoes" element={<Approvals />} />
