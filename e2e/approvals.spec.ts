@@ -15,10 +15,17 @@ test("aprovações: revisar, decidir e confirmar que aprovar não publica", asyn
   await page.getByTestId("request-changes").click();
   await expect(page.getByTestId("review-status")).toContainText("Alterações solicitadas");
   await expect(page.getByTestId("open-publish")).toHaveCount(0); // bloqueado
+  await page.getByTestId("note").fill("Revisão e2e: versão rejeitada para ajustes");
+  await page.getByTestId("reject").click();
+  await expect(page.getByTestId("review-status")).toContainText("Rejeitada");
   await page.getByTestId("approve").click();
   await expect(page.getByTestId("review-status")).toContainText("Aprovada");
   await expect(page.getByTestId("events")).toContainText("aprovada");
   await expect(page.getByTestId("pub-row")).toHaveCount(0); // aprovar não publica
+  if (item.review.status === "pending" && all.filter((a: {review:{status:string}})=>a.review.status === "pending").length === 1) {
+    await expect(page.getByText("Nenhum outro conteúdo neste filtro.", { exact: false })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("player")).toBeVisible();
+  }
   const d = await (await request.get(`/api/approvals/${item.run_id}`)).json();
   expect(d.publications).toHaveLength(0);
   if (!(await (await request.get("/api/youtube/status")).json()).channel) {

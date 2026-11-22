@@ -14,6 +14,7 @@ async function createLine(page: Page, name: string, config: object, extra: Recor
 
 test("menu inicial e áreas indisponíveis", async ({ page }) => {
   await page.goto("/");
+  await page.getByText("Ferramentas avançadas", { exact: true }).click();
   for (const l of ["Visão Geral", "Linhas de Produção", "Execuções", "Biblioteca", "Provedores", "Laboratório", "Aprovações", "Configurações"])
     await expect(page.getByRole("link", { name: l === "Laboratório" ? /^Laboratório$/ : l })).toBeVisible();
   await page.getByRole("link", { name: "Configurações" }).click();
@@ -41,7 +42,7 @@ test("linha: criar, ativar, executar, acompanhar e baixar artefato", async ({ pa
   await page.getByTestId("run-line").click();
   await expect(page).toHaveURL(/\/execucoes\/.+/);
   await expect(page.getByTestId("step")).toHaveCount(3);
-  await expect(page.getByText("Concluída").first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("status").first()).toHaveText("Concluída", { timeout: 30_000 });
   await expect(page.getByText("US$ 0.75").first()).toBeVisible();
   const [download] = await Promise.all([page.waitForEvent("download"), page.getByTestId("download").click()]);
   expect(download.suggestedFilename()).toBe("demo-output.json");
@@ -60,7 +61,7 @@ test("falha e retomada pela interface", async ({ page }) => {
   await expect(page.getByTestId("run-error")).toContainText("process", { timeout: 45_000 });
   await expect(page.getByTestId("resume-run")).toBeVisible();
   await page.getByTestId("resume-run").click();
-  await expect(page.getByText("Concluída").first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("status").first()).toHaveText("Concluída", { timeout: 30_000 });
   await expect(page.getByTestId("download")).toBeVisible();
 });
 
@@ -79,7 +80,7 @@ test("linha: arquivar preserva histórico e exibe logs da execução", async ({ 
   await createLine(page, name, { step_delay: 0.1 });
   await page.getByTestId("toggle-line").click();
   await page.getByTestId("run-line").click();
-  await expect(page.getByText("Concluída").first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("status").first()).toHaveText("Concluída", { timeout: 30_000 });
   await expect(page.getByTestId("logs")).toContainText("etapa iniciada");
   await page.getByRole("link", { name: /←/ }).click();
   await page.getByTestId("archive-line").click();
