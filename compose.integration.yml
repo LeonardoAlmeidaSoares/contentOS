@@ -1,0 +1,14 @@
+name: contentos-integration
+
+services:
+  api:
+    image: contentos-integration-api:unified
+    ports: !override ["127.0.0.1:8341:8000"]
+  worker:
+    image: contentos-integration-worker:unified
+  beat:
+    image: contentos-integration-beat:unified
+    profiles: [scheduler-disabled]
+  frontend:
+    image: contentos-integration-frontend:unified
+    ports: !override ["192.168.18.2:8340:80"]

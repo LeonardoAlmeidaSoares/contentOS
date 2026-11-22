@@ -110,7 +110,7 @@ test("assistente: pergunta, prévia e confirmação criam fábrica real (respost
   const before = await (await request.get("/api/lines")).json();
   expect(before.some((f: {name:string})=>f.name === config.name)).toBe(false);
   await page.getByTestId("confirm-create").click();
-  await expect(page).toHaveURL(/\/fabricas\/[a-f0-9-]+$/);
+  await expect(page).toHaveURL(/\/fabricas\/[a-f0-9-]+(?:\?aba=identidade)?$/);
   await expect(page.getByTestId("factory-name")).toHaveText(config.name);
   const id = new URL(page.url()).pathname.split("/").pop();
   const factory = await (await request.get(`/api/studio/factories/${id}`)).json();
