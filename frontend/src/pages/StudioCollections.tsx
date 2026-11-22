@@ -69,7 +69,7 @@ export function ProductionCard({
         />
         <span className="media-type">
           <Icon name="play" size={12} />
-          {run.pipeline === "video_youtube" ? "Vídeo" : "Produção"}
+          {run.trigger === "pilot" ? "Vídeo-piloto" : run.pipeline === "video_youtube" ? "Vídeo" : "Produção"}
         </span>
         <span className="media-status">
           {review && run.status === "succeeded" ? (
@@ -82,6 +82,7 @@ export function ProductionCard({
         </span>
       </div>
       <div className="production-card-body space-y-3 p-4">
+        {run.standard_version && <p className="text-xs text-cyan-200">Padrão v{run.standard_version} · {run.format === "vertical" ? "9:16" : "16:9"}</p>}
         <h3 className="line-clamp-2 text-base font-semibold">
           {review?.title ?? run.line_name ?? "Produção"}
         </h3>

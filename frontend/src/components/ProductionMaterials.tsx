@@ -69,6 +69,7 @@ export function ProductionWorkspace({ run }: { run: Run }) {
           {done} de {run.steps.length} etapas concluídas
         </span>
       </div>
+      {(run.standard_version || run.trigger === "pilot") && <p className="my-3 text-xs text-cyan-200">{run.trigger === "pilot" ? "Vídeo-piloto · não pode ser publicado · " : ""}{run.standard_version ? `Padrão v${run.standard_version} · ` : ""}{run.format === "vertical" ? "Vertical 9:16" : "Horizontal 16:9"}</p>}
       <ol className="production-track" aria-label="Etapas da produção">
         {run.steps.map((s) => (
           <li
@@ -106,7 +107,7 @@ export function ProductionWorkspace({ run }: { run: Run }) {
             preload="metadata"
             src={api.imageUrl(video.id)}
             poster={poster ? api.imageUrl(poster.id) : undefined}
-            className="aspect-video w-full bg-black"
+            className={`w-full max-h-[65vh] bg-black object-contain ${run.format === "vertical" ? "aspect-[9/16]" : "aspect-video"}`}
             aria-label={title ?? "Prévia da produção"}
           />
         </div>

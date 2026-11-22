@@ -772,3 +772,7 @@ html[data-motion="reduced"] *:after {
     }
   }
 }
+
+.section-tabs button { display: inline-flex; align-items: center; padding: .85rem 1rem; color: #afc1cc; white-space: nowrap; border-bottom: 2px solid transparent; font-size: .8125rem; }
+.section-tabs button.active { color: #67e8f9; border-bottom-color: #19c4d8; }
+.section-tabs { overflow-x: auto; }

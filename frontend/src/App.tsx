@@ -8,6 +8,7 @@ import {
   Route,
   Routes,
   useLocation,
+  useParams,
 } from "react-router-dom";
 import { LineDetail } from "./pages/LineDetail";
 import { LineForm } from "./pages/LineForm";
@@ -31,7 +32,7 @@ import { ProviderDetail, ProviderForm, Providers } from "./pages/Providers";
 import { RunDetail, Runs } from "./pages/Runs";
 import { ApprovalDetailPage, Approvals, Settings } from "./approvals";
 import { VoiceLab } from "./voices";
-import { ChannelCenter, NewChannel } from "./channels";
+
 import {
   CreateFactory,
   FactoryInside,
@@ -219,8 +220,8 @@ function Shell() {
             <Route path="/fabricas" element={<Factories />} />
             <Route path="/fabricas/nova" element={<CreateFactory />} />
             <Route path="/fabricas/:id" element={<FactoryInside />} />
-            <Route path="/canais/novo" element={<NewChannel />} />
-            <Route path="/canais/:id" element={<ChannelCenter />} />
+            <Route path="/canais/novo" element={<Navigate to="/fabricas/nova" replace />} />
+            <Route path="/canais/:id" element={<ChannelRedirect />} />
             <Route path="/producoes" element={<Productions />} />
             <Route path="/producao/:id" element={<Production />} />
             <Route path="/vozes" element={<VoiceLab />} />
@@ -269,4 +270,9 @@ function LegacyRoutes() {
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
+}
+
+function ChannelRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/fabricas/${id}?aba=identidade`} replace />;
 }

@@ -487,7 +487,7 @@ export function ApprovalDetailPage({
                 <video
                   controls
                   preload="metadata"
-                  className="aspect-video w-full bg-black"
+                  className={`w-full max-h-[75vh] bg-black object-contain ${d.format === "vertical" ? "aspect-[9/16]" : "aspect-video"}`}
                   src={api.imageUrl(d.video_artifact_id)}
                   data-testid="player"
                   poster={

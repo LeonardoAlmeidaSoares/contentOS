@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
+import { Link, useNavigate, useParams, useLocation, useSearchParams } from "react-router-dom";
 import {
   api,
   ApprovalItem,
@@ -12,6 +12,7 @@ import {
   RunSummary,
   StudioStatus,
 } from "./api";
+import { StandardForm, ChannelIdentity, ChannelProducer, channelCall, Channel, Cfg } from "./channels";
 import { usePoll } from "./hooks";
 import { isActiveRun, money } from "./ui";
 import {
@@ -676,6 +677,7 @@ export function CreateFactory() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [manual, setManual] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
   const started = useRef(false);
   const lastReply = [...turns].reverse().find((t) => t.reply)?.reply;
@@ -720,12 +722,11 @@ export function CreateFactory() {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }, [turns, busy]);
 
-  const create = async () => {
-    if (!proposal) return;
+  const create = async (config: Cfg, pending: string[]) => {
     setCreating(true);
     try {
-      const r = await api.createFactory(proposal.config);
-      nav(`/fabricas/${r.id}`);
+      const r = await api.createChannel(config, pending, proposal ? "chat" : "manual");
+      nav(`/fabricas/${r.id}?aba=identidade`);
     } catch (e) {
       setErr((e as Error).message);
       setCreating(false);
@@ -877,21 +878,16 @@ export function CreateFactory() {
           </p>
         </aside>
       </div>
-      {proposal && (
+      {!proposal && !manual && <button className={ghost} onClick={() => setManual(true)}>Preencher manualmente</button>}
+      {(proposal || manual) && (
         <>
-          <PreviewCard rows={proposal.preview} title="Prévia da sua fábrica" />
-          <div className="flex flex-wrap gap-3">
-            <button
-              className={primary}
-              onClick={create}
-              disabled={creating}
-              data-testid="confirm-create"
-            >
-              Confirmar e criar fábrica
-            </button>
-            <span className="self-center text-sm text-slate-400">
-              ou continue conversando para ajustar.
-            </span>
+          {proposal && <PreviewCard rows={proposal.preview} title="Prévia da sua fábrica" />}
+          <div className={`${card} p-5`}>
+            <h2 className="mb-4 text-lg font-semibold">Revise o padrão criativo</h2>
+            <StandardForm key={JSON.stringify(proposal?.config ?? {})} initial={(proposal?.config ?? {}) as Partial<Cfg>}
+              assumed={proposal?.assumed ?? []} submitLabel="Confirmar e criar fábrica" submitTestId="confirm-create" busy={creating}
+              onSubmit={create} />
+            <p className="mt-4 text-sm text-slate-400">O padrão será salvo como proposta. Você o aprova antes de iniciar a produção.</p>
           </div>
         </>
       )}
@@ -903,6 +899,14 @@ export function CreateFactory() {
 export function FactoryInside() {
   const { id = "" } = useParams();
   const nav = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("aba") ?? "visao-geral";
+  const { data: channel, error: channelError } = usePoll(() => channelCall<Channel>("GET", `/api/studio/factories/${id}/channel`), [id], 3000);
+  const [channelOverride, setChannelOverride] = useState<Channel | null>(null);
+  useEffect(() => { if (channel) setChannelOverride(channel); }, [channel]);
+  const ch = channelOverride ?? channel;
+  const reloadChannel = async () => setChannelOverride(await channelCall<Channel>("GET", `/api/studio/factories/${id}/channel`));
+  const versioned = !!ch && !ch.legacy;
   const { data: f, error } = usePoll(() => api.factory(id), [id], 60000);
   const [cur, setCur] = useState<{
     data: Awaited<ReturnType<typeof api.factory>>;
@@ -1001,14 +1005,14 @@ export function FactoryInside() {
     }
   };
 
-  if ((error && !factory) || (lineError && !line))
+  if ((error && !factory) || (lineError && !line) || (channelError && !ch))
     return (
       <Notice tone="error">
         Não foi possível abrir esta fábrica. Verifique a conexão ou volte para
         Minhas Fábricas.
       </Notice>
     );
-  if (!factory || !line)
+  if (!factory || !line || !ch)
     return <p className="text-sm text-slate-400">Carregando…</p>;
   const mine = (runs ?? []).filter((r) => r.pipeline === "video_youtube");
   return (
@@ -1038,7 +1042,9 @@ export function FactoryInside() {
             <span className="rounded-full bg-cyan-300/10 px-3 py-1 text-xs text-cyan-200">
               {active
                 ? "Em produção"
-                : line.interval_minutes
+                : versioned
+                  ? "Sob demanda"
+                  : line.interval_minutes
                   ? line.active
                     ? "Automação ligada"
                     : "Automação pausada"
@@ -1051,40 +1057,26 @@ export function FactoryInside() {
           <p className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-400">
             <Icon name="play" size={15} />
             YouTube <span>·</span>
-            {cfgNum(line, "video_minutes")} min por vídeo <span>·</span>
-            {freqText(cfgNum(line, "frequency_per_week"))}
+            {versioned ? (ch.current ? `Padrão v${ch.current.version} · produção sob demanda` : "Padrão aguardando aprovação") : `${cfgNum(line, "video_minutes")} min por vídeo · ${freqText(cfgNum(line, "frequency_per_week"))}`}
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <a className={ghost} href="#creative-settings">
+          <button className={ghost} onClick={() => setParams({ aba: "identidade" })}>
             <Icon name="settings" size={16} />
             Identidade
-          </a>
-          <a className={primary} href="#new-production">
+          </button>
+          <button className={primary} onClick={() => setParams({ aba: "producoes" })}>
             <Icon name="plus" size={16} />
             Nova produção
-          </a>
+          </button>
         </div>
       </section>
-      <Link to={`/canais/${id}`} className="text-link" data-testid="open-channel">Abrir Centro do Canal (padrão versionado) →</Link>
       <nav className="section-tabs" aria-label="Áreas da fábrica">
-        <a href="#factory-production">
-          <Icon name="play" size={17} />
-          Produção
-        </a>
-        <a href="#factory-history">
-          <Icon name="library" size={17} />
-          Conteúdos produzidos
-        </a>
-        <a href="#creative-settings">
-          <Icon name="spark" size={17} />
-          Identidade criativa
-        </a>
-        <a href="#factory-automation">
-          <Icon name="clock" size={17} />
-          Automação
-        </a>
+        {([['visao-geral', 'Visão Geral'], ['planejamento', 'Planejamento'], ['producoes', 'Produções'], ['identidade', 'Identidade'], ['configuracoes', 'Configurações']] as const).map(([value, label]) => <button key={value} className={tab === value ? "active" : ""} aria-current={tab === value ? "page" : undefined} data-testid={`tab-${value}`} onClick={() => setParams({ aba: value })}>{label}</button>)}
       </nav>
+      {tab === "planejamento" && <EmptyState icon="clock" title="O planejamento começa por uma boa ideia">O banco de pautas e a produção programada ainda não estão disponíveis. Por enquanto, escolha o tema ao iniciar cada produção.</EmptyState>}
+      {tab === "identidade" && <ChannelIdentity ch={ch} reload={reloadChannel} />}
+      {tab === "configuracoes" && <div className={`${card} space-y-3 p-5`}><h2 className="font-semibold">Configurações da fábrica</h2><p className="text-sm text-slate-300">{versioned ? "Voz, formatos e identidade são alterados por propostas na aba Identidade. A produção programada ainda não está disponível para canais versionados." : "Esta fábrica mantém as configurações e regras de compatibilidade anteriores."}</p><div className="flex flex-wrap gap-3"><Link className={ghost} to={`/vozes?fabrica=${id}`}>Laboratório de Vozes</Link><Link className={ghost} to={`/linhas/${id}`}>Configurações avançadas e custos</Link></div></div>}
       {(runsError || reviewsError) && (
         <Notice tone="error">
           Não foi possível atualizar parte do histórico desta fábrica.
@@ -1109,15 +1101,15 @@ export function FactoryInside() {
           <Icon name="arrow" size={18} />
         </Link>
       )}
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,2.2fr)_minmax(300px,1fr)]">
-        <div className="min-w-0 space-y-6" id="factory-production">
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,2.2fr)_minmax(300px,1fr)]" style={{ display: tab === "planejamento" || tab === "identidade" && versioned || tab === "configuracoes" && versioned ? "none" : undefined, gridTemplateColumns: ["identidade", "configuracoes"].includes(tab) ? "minmax(0,1fr)" : undefined }}>
+        <div className="min-w-0 space-y-6" id="factory-production" style={{ display: ["identidade", "configuracoes"].includes(tab) ? "none" : undefined }}>
           {currentError && (
             <Notice tone="error">
               Não foi possível atualizar os materiais da produção.
             </Notice>
           )}
           {currentRun && <ProductionWorkspace run={currentRun} />}
-          <div id="new-production" className={`${card} space-y-4 p-5`}>
+          {versioned ? <div id="new-production"><ChannelProducer ch={ch} /></div> : <div id="new-production" className={`${card} space-y-4 p-5`}>
             <SetupNotice st={st ?? null} />
             <div className="flex items-start gap-3">
               <span className="rounded-lg bg-cyan-300/10 p-2 text-cyan-300">
@@ -1188,7 +1180,7 @@ export function FactoryInside() {
                 próprio.
               </p>
             )}
-          </div>
+          </div>}
           <div id="factory-history">
             <div className="section-heading">
               <h2>Produções da fábrica</h2>
@@ -1212,8 +1204,9 @@ export function FactoryInside() {
             </div>
           </div>
         </div>
-        <div className="min-w-0 space-y-5" id="creative-settings">
-          <div className={`${card} space-y-4 p-5`}>
+        <div className="min-w-0 space-y-5" id="creative-settings" style={{ display: tab === "producoes" ? "none" : undefined }}>
+          {versioned ? <div className={`${card} space-y-4 p-5`}><h2 className="font-semibold">Identidade aprovada</h2><p className="text-sm text-slate-300">{ch.current ? `As novas produções usam o padrão v${ch.current.version}.` : "Aprove uma proposta de identidade para iniciar a produção."}</p><button className={ghost} onClick={() => setParams({ aba: "identidade" })}>Revisar padrão criativo</button><Link className={ghost} to={`/vozes?fabrica=${id}`}>Comparar narradores</Link></div> : <>
+          {tab !== "configuracoes" && <><div className={`${card} space-y-4 p-5`}>
             <h2 className="flex items-center gap-2 text-base font-semibold">
               <Icon name="spark" className="text-cyan-300" />
               Assistente da Fábrica
@@ -1279,8 +1272,8 @@ export function FactoryInside() {
               </p>
             )}
           </div>
-          <PreviewCard rows={factory.preview} title="Identidade criativa" />
-          <div
+          <PreviewCard rows={factory.preview} title="Identidade criativa" /></>}
+          {tab !== "identidade" && <div
             id="factory-automation"
             className={`${card} space-y-2 p-5 text-sm`}
           >
@@ -1302,7 +1295,8 @@ export function FactoryInside() {
               Custo no mês: {money(line.cost_month)}. A publicação é confirmada
               separadamente.
             </p>
-          </div>
+          </div>}
+          </>}
         </div>
       </div>
     </div>
@@ -1328,7 +1322,7 @@ export function Production() {
   );
   const { data: review } = usePoll(
     async () =>
-      run?.status === "succeeded" && run.pipeline === "video_youtube"
+      run?.status === "succeeded" && run.pipeline === "video_youtube" && run.trigger !== "pilot"
         ? api.approval(id)
         : null,
     [id, run?.status],
@@ -1344,6 +1338,7 @@ export function Production() {
   const exp = run.steps.find((s) => s.name === "export")?.output as {
     title?: string;
     duration_seconds?: number;
+    validation?: { ok: boolean; checks: { name: string; ok: boolean; detail: string }[] };
   } | null;
   const script = run.steps.find((s) => s.name === "script")?.output as {
     title?: string;
@@ -1387,6 +1382,12 @@ export function Production() {
           <Pill status={run.status} />
         </div>
       </div>
+      {run.trigger === "pilot" && <Notice>Vídeo-piloto para avaliar a identidade. Não entra na aprovação editorial nem pode ser publicado.</Notice>}
+      {run.standard_version && <p className="text-sm text-cyan-200" data-testid="creative-version">Padrão criativo v{run.standard_version} · {run.format === "vertical" ? "Vertical 9:16" : "Horizontal 16:9"}</p>}
+      {(() => {
+        const validation = exp?.validation;
+        return validation && <div className={`${card} space-y-2 p-4`} data-testid="production-validation"><h2 className="font-semibold">Validação da produção</h2><ul className="grid gap-2 text-sm sm:grid-cols-2">{validation.checks.map(c => <li key={c.name} className={c.ok ? "text-emerald-300" : "text-red-300"}>{c.ok ? "✓" : "✕"} {c.name}: {c.detail}</li>)}</ul></div>;
+      })()}
       {actionError && <Notice tone="error">{actionError}</Notice>}
       {error && (
         <Notice tone="error">Não foi possível atualizar esta produção.</Notice>
@@ -1398,7 +1399,7 @@ export function Production() {
               <video
                 controls
                 preload="metadata"
-                className="aspect-video w-full bg-black"
+                className={`w-full max-h-[75vh] bg-black object-contain ${run.format === "vertical" ? "aspect-[9/16]" : "aspect-video"}`}
                 src={api.imageUrl(video.id)}
                 poster={
                   art("miniatura.jpg")
@@ -1415,7 +1416,7 @@ export function Production() {
                 >
                   Baixar MP4
                 </a>
-                {run.pipeline === "video_youtube" && (
+                {run.status === "succeeded" && run.pipeline === "video_youtube" && run.trigger !== "pilot" && (
                   <Link
                     className={ghost}
                     to={`/aprovacoes/${run.id}`}

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, Line } from "./api";
 import { usePoll } from "./hooks";
+import { PageHeading } from "./components/StudioVisuals";
 import { card, ghost, input, Notice, primary } from "./studio";
 
 type VoiceInfo = { id: string; label: string; gender: string | null; note: string };
@@ -11,7 +12,7 @@ type Provider = {
 };
 type Sample = { id: string; provider: string; voice: string; text: string; params: { speed?: number; style?: string; pitch?: number }; seconds: number; gen_ms: number; cost: number; created_at: string; audio_url: string };
 type Interp = { provider: string; voice: string; speed: number | null; style: string; explanation: string; unsupported: string[]; instruction: string };
-type Identity = { voice: Record<string, unknown>; provider: string; voice_id: string | null; legacy: boolean };
+type Identity = { voice: Record<string, unknown>; provider: string; voice_id: string | null; legacy: boolean; versioned?: boolean; standard_version?: number | null; awaiting_approval?: boolean; proposal?: { id: string; version: number; status: string } };
 
 async function vcall<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, { method, credentials: "same-origin", headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -83,7 +84,7 @@ export function VoiceLab() {
     setBusy(s.id); setMsg(null); setOk(null);
     try {
       const r = await vapi.save(fid, { provider: s.provider, voice_id: s.voice, speed: s.params.speed ?? 1, pitch: s.params.pitch ?? 40, style: s.params.style ?? "", instructions: interp?.instruction ?? nl });
-      setIdentity(r); setOk("Voz salva na fábrica. Será usada nas próximas produções.");
+      setIdentity(r); setOk(r.proposal ? `Narrador proposto na versão ${r.proposal.version}. A voz vigente continua sendo usada até você aprovar essa nova versão na aba Identidade.` : "Voz salva na fábrica. Será usada nas próximas produções.");
     } catch (e) { setMsg({ tone: "error", text: (e as Error).message }); } finally { setBusy(null); }
   };
   const remove = async (id: string) => { await vapi.del(id); setList((list ?? []).filter((s) => s.id !== id)); };
@@ -93,8 +94,7 @@ export function VoiceLab() {
   const fname = lines?.find((l) => l.id === fid)?.name;
   return (
     <div className="space-y-6">
-      <div><h1 className="text-2xl font-semibold">Laboratório de Vozes</h1>
-        <p className="mt-1 text-sm text-slate-400">Gere amostras reais com o mesmo texto, compare de ouvido e salve a voz preferida na fábrica. Nada aqui é simulado.</p></div>
+      <PageHeading eyebrow="Encontre a voz do seu projeto" title="Laboratório de Vozes" description="Compare amostras reais. Em fábricas versionadas, a escolha do narrador cria uma proposta para sua aprovação." />
 
       <div className={`${card} space-y-3 p-5`}>
         <h2 className="font-semibold">Provedores</h2>
@@ -153,8 +153,8 @@ export function VoiceLab() {
             <select value={fid} onChange={(e) => setFid(e.target.value)} className="rounded-xl border border-petrol-600 bg-petrol-950/70 px-3 py-2 text-sm" data-testid="vl-factory">
               <option value="">— escolha —</option>{lines?.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
         </div>
-        {identity && <p className="text-xs text-slate-400" data-testid="vl-current">Voz atual de “{fname}”: {identity.provider}/{identity.voice_id}{identity.legacy ? " (padrão antigo, ainda sem identidade vocal)" : ""}.</p>}
-        {ok && <Notice tone="warn">{ok}</Notice>}
+        {identity && <p className="text-xs text-slate-400" data-testid="vl-current">{identity.awaiting_approval ? "Voz proposta" : "Voz vigente"} de “{fname}”: {identity.provider}/{identity.voice_id}{identity.standard_version ? ` · padrão v${identity.standard_version}` : identity.awaiting_approval ? " · aguardando aprovação" : identity.legacy ? " (padrão antigo, ainda sem identidade vocal)" : ""}.</p>}
+        {ok && <Notice tone="warn">{ok}{identity?.proposal && <Link className="ml-2 text-link" to={`/fabricas/${fid}?aba=identidade`}>Revisar proposta →</Link>}</Notice>}
         {!list?.length && <p className="text-sm text-slate-400">Nenhuma amostra ainda. Gere a primeira acima.</p>}
         <div className="space-y-3">
           {list?.map((s) => {
@@ -169,7 +169,7 @@ export function VoiceLab() {
                 <p className="mt-1 line-clamp-2 text-xs text-slate-500">“{s.text}”</p>
                 <audio controls preload="none" src={s.audio_url} className="mt-2 w-full" />
                 <div className="mt-2 flex gap-2">
-                  <button className={primary} onClick={() => useSample(s)} disabled={!fid || !!busy || mine} data-testid="vl-use">{mine ? "Voz atual da fábrica" : "Usar na fábrica"}</button>
+                  <button className={primary} onClick={() => useSample(s)} disabled={!fid || !!busy || mine && !identity?.versioned} data-testid="vl-use">{identity?.versioned ? "Propor narrador para a fábrica" : mine ? "Voz atual da fábrica" : "Usar na fábrica"}</button>
                   <button className={ghost} onClick={() => remove(s.id)}>Remover</button>
                 </div>
                 {!fid && <p className="mt-1 text-xs text-slate-500">Escolha uma fábrica acima para salvar esta voz.</p>}
@@ -177,7 +177,7 @@ export function VoiceLab() {
             );
           })}
         </div>
-        <p className="text-xs text-slate-500"><Link className="text-cyan-300 hover:underline" to="/fabricas">Minhas Fábricas</Link> · a voz salva vale para os próximos vídeos; se o provedor ficar indisponível, o Piper assume e isso é registrado na produção.</p>
+        <p className="text-xs text-slate-500"><Link className="text-cyan-300 hover:underline" to="/fabricas">Minhas Fábricas</Link> · Fábricas versionadas usam a voz do padrão aprovado. Indisponibilidade e fallback são apresentados conforme a identidade da fábrica.</p>
       </div>
     </div>
   );

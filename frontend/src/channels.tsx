@@ -1,10 +1,10 @@
 import { FormEvent, ReactNode, useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { usePoll } from "./hooks";
 import { card, ghost, input, Notice, Pill, primary } from "./studio";
 
 type Fmt = { id: "horizontal" | "vertical"; enabled: boolean; min_seconds: number; max_seconds: number };
-type Cfg = {
+export type Cfg = {
   name: string; channel_name: string; niche: string; theme: string; description: string; audience: string; language: string; platform: string;
   tone: string; narrative_style: string; visual_style: string; editing_rhythm: string; references: string; restrictions: string; forbidden_terms: string[];
   frequency_per_week: number; formats: Fmt[];
@@ -18,11 +18,10 @@ type Std = {
 };
 type Check = { name: string; ok: boolean; detail: string };
 type RunRow = { id: string; status: string; trigger: string; format: string | null; standard_version: number | null; created_at: string; cost: number; error: string | null; title: string | null; duration_seconds: number | null; validation: { ok: boolean; checks: Check[] } | null; steps_done: number; steps_total: number };
-type Channel = { id: string; name: string; legacy: boolean; legacy_config: Cfg | null; current: Std | null; standards: Std[]; runs: RunRow[] };
+export type Channel = { id: string; name: string; legacy: boolean; legacy_config: Cfg | null; current: Std | null; standards: Std[]; runs: RunRow[] };
 type Prov = { id: string; label: string; available: boolean; voices: { id: string; label: string }[]; controls: { style: boolean } };
-type ChatReply = { status: "need_info" | "ready"; message: string; questions: string[]; proposal: { config: Cfg; assumed: string[] } | null };
 
-async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
+export async function channelCall<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, { method, credentials: "same-origin", headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
   if (res.status === 401) window.dispatchEvent(new Event("unauthorized"));
   if (!res.ok) {
@@ -43,7 +42,7 @@ const blank = (): Cfg => ({
 });
 const normalize = (c: Partial<Cfg>): Cfg => {
   const b = blank();
-  return { ...b, ...c, voice: { ...b.voice, ...(c.voice ?? {}), provider: c.voice?.provider ?? c.voice?.engine ?? "piper" }, editing: { ...b.editing, ...(c.editing ?? {}) },
+  return { ...b, ...c, niche: c.niche || c.theme || "", channel_name: c.channel_name || c.name || "", voice: { ...b.voice, ...(c.voice ?? {}), provider: c.voice?.provider ?? c.voice?.engine ?? "piper" }, editing: { ...b.editing, ...(c.editing ?? {}) },
     formats: c.formats?.length ? c.formats : b.formats } as Cfg;
 };
 
@@ -56,11 +55,11 @@ function Field({ label, children, hint, assumed }: { label: string; children: Re
 }
 
 /** Revisão estruturada do padrão (sem JSON): o usuário corrige tudo antes de aprovar. */
-function StandardForm({ initial, assumed = [], submitLabel, onSubmit, busy }: { initial: Partial<Cfg>; assumed?: string[]; submitLabel: string; busy: boolean; onSubmit: (c: Cfg, pending: string[]) => void }) {
+export function StandardForm({ initial, assumed = [], submitLabel, onSubmit, busy, submitTestId = "save-standard" }: { initial: Partial<Cfg>; assumed?: string[]; submitLabel: string; busy: boolean; onSubmit: (c: Cfg, pending: string[]) => void; submitTestId?: string }) {
   const [c, setC] = useState<Cfg>(() => normalize(initial));
   const [terms, setTerms] = useState((initial.forbidden_terms ?? []).join(", "));
   const [confirmed, setConfirmed] = useState<string[]>([]);
-  const { data: prov } = usePoll(() => call<{ providers: Prov[] }>("GET", "/api/voices/providers"), [], 60000);
+  const { data: prov } = usePoll(() => channelCall<{ providers: Prov[] }>("GET", "/api/voices/providers"), [], 60000);
   const set = <K extends keyof Cfg>(k: K, v: Cfg[K]) => setC((p) => ({ ...p, [k]: v }));
   const setVoice = (k: string, v: unknown) => setC((p) => ({ ...p, voice: { ...p.voice, [k]: v } }));
   const setFmt = (id: Fmt["id"], patch: Partial<Fmt>) => setC((p) => {
@@ -73,7 +72,7 @@ function StandardForm({ initial, assumed = [], submitLabel, onSubmit, busy }: { 
   const is = (k: string) => assumed.some((a) => a.toLowerCase().includes(k.toLowerCase())) && !confirmed.includes(k);
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    onSubmit({ ...c, name: c.name || c.channel_name, channel_name: c.channel_name || c.name, theme: c.theme || c.niche, voice: { ...c.voice, language: c.language, fallback: false },
+    onSubmit({ ...c, name: c.name || c.channel_name, channel_name: c.channel_name || c.name, theme: c.niche || c.theme, voice: { ...c.voice, language: c.language, fallback: false },
       forbidden_terms: terms.split(",").map((t) => t.trim()).filter(Boolean) }, open);
   };
   const fmt = (id: Fmt["id"]) => c.formats.find((f) => f.id === id);
@@ -123,49 +122,8 @@ function StandardForm({ initial, assumed = [], submitLabel, onSubmit, busy }: { 
       </div>
       {assumed.length > 0 && <div className="flex flex-wrap items-center gap-3 text-sm text-slate-300">Confirmar sugestões:
         {assumed.map((a) => <label key={a} className="flex items-center gap-1"><input type="checkbox" checked={confirmed.includes(a)} onChange={(e) => setConfirmed((p) => (e.target.checked ? [...p, a] : p.filter((x) => x !== a)))} />{a}</label>)}</div>}
-      <button className={primary} disabled={busy} data-testid="save-standard">{submitLabel}</button>
+      <button className={primary} disabled={busy} data-testid={submitTestId}>{submitLabel}</button>
     </form>
-  );
-}
-
-export function NewChannel() {
-  const nav = useNavigate();
-  const [text, setText] = useState("");
-  const [thread, setThread] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
-  const [reply, setReply] = useState<ChatReply | null>(null);
-  const [manual, setManual] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const send = async (e: FormEvent) => {
-    e.preventDefault(); if (!text.trim()) return;
-    const msgs = [...thread, { role: "user" as const, content: text.trim() }];
-    setBusy(true); setErr(null); setText(""); setThread(msgs);
-    try {
-      const r = await call<ChatReply>("POST", "/api/studio/chat", { messages: msgs });
-      setReply(r); setThread([...msgs, { role: "assistant", content: r.message + (r.questions.length ? "\n" + r.questions.join("\n") : "") }]);
-    } catch (x) { setErr((x as Error).message); } finally { setBusy(false); }
-  };
-  const save = async (config: Cfg, pending: string[]) => {
-    setBusy(true); setErr(null);
-    try { const r = await call<{ id: string }>("POST", "/api/studio/channels", { config, pending, origin: reply?.proposal ? "chat" : "manual" }); nav(`/canais/${r.id}`); }
-    catch (x) { setErr((x as Error).message); } finally { setBusy(false); }
-  };
-  return (
-    <div className="space-y-6">
-      <div><h1 className="text-2xl font-semibold">Criar canal</h1>
-        <p className="mt-1 text-sm text-slate-400">Descreva o canal; a IA monta uma proposta. Você revisa, corrige e aprova o Padrão do Canal antes de qualquer produção.</p></div>
-      <form onSubmit={send} className={`${card} space-y-3 p-5`}>
-        {thread.map((m, i) => <p key={i} className={`whitespace-pre-line text-sm ${m.role === "user" ? "text-cyan-200" : "text-slate-300"}`}>{m.role === "user" ? "Você: " : "Assistente: "}{m.content}</p>)}
-        <textarea className={input} rows={3} value={text} onChange={(e) => setText(e.target.value)} data-testid="chat-input"
-          placeholder="Ex.: canal de histórias de terror, vídeos de 10 minutos, narrador brasileiro, imagens cinematográficas e três publicações por semana às 19h" />
-        <div className="flex gap-3"><button className={primary} disabled={busy || !text.trim()} data-testid="chat-send">Interpretar pedido</button>
-          {!reply && !manual && <button type="button" className={ghost} onClick={() => setManual(true)}>Preencher manualmente</button>}</div>
-      </form>
-      {err && <Notice tone="error">{err}</Notice>}
-      {(reply?.proposal || manual) && (
-        <div className={`${card} p-5`}><h2 className="mb-4 font-semibold">Revisão do padrão proposto</h2>
-          <StandardForm key={reply ? JSON.stringify(reply.proposal?.config).length : "m"} initial={reply?.proposal?.config ?? {}} assumed={reply?.proposal?.assumed ?? []} busy={busy} submitLabel="Salvar como proposta (v1)" onSubmit={save} /></div>)}
-    </div>
   );
 }
 
@@ -192,19 +150,19 @@ function StdCard({ s, ch, reload }: { s: Std; ch: Channel; reload: () => void })
       {(s.status === "proposed" || s.status === "approved") && <div className="flex flex-wrap items-center gap-2">
         {s.status === "proposed" && <>
           {s.pending.length > 0 && <label className="flex items-center gap-1 text-xs text-slate-300"><input type="checkbox" checked={confirm} onChange={(e) => setConfirm(e.target.checked)} />Confirmo as sugestões</label>}
-          <button className={primary} disabled={busy || s.problems.length > 0} data-testid="approve" onClick={() => act(() => call("POST", `/api/studio/standards/${s.id}/approve`, { confirm_pending: confirm }))}>Aprovar padrão</button>
-          <button className={ghost} disabled={busy} onClick={() => act(() => call("POST", `/api/studio/standards/${s.id}/reject`))}>Rejeitar</button></>}
-        <button className={ghost} disabled={busy} data-testid="make-preview" onClick={() => act(() => call("POST", `/api/studio/standards/${s.id}/preview`))}>{busy ? "Gerando…" : "Prévia conceitual"}</button>
+          <button className={primary} disabled={busy || s.problems.length > 0} data-testid="approve" onClick={() => act(() => channelCall("POST", `/api/studio/standards/${s.id}/approve`, { confirm_pending: confirm }))}>Aprovar padrão</button>
+          <button className={ghost} disabled={busy} onClick={() => act(() => channelCall("POST", `/api/studio/standards/${s.id}/reject`))}>Rejeitar</button></>}
+        <button className={ghost} disabled={busy} data-testid="make-preview" onClick={() => act(() => channelCall("POST", `/api/studio/standards/${s.id}/preview`))}>{busy ? "Gerando…" : "Prévia conceitual"}</button>
         <select className={`${input} !w-auto !py-2`} value={pf} onChange={(e) => setPf(e.target.value as Fmt["id"])}>{s.config.formats.filter((f) => f.enabled).map((f) => <option key={f.id} value={f.id}>{FMT_LABEL[f.id]}</option>)}</select>
         <input className={`${input} !w-56 !py-2`} placeholder="Tema do piloto (opcional)" value={topic} onChange={(e) => setTopic(e.target.value)} />
         <button className={ghost} disabled={busy || ch.runs.some((r) => ["queued", "running", "retrying"].includes(r.status))} data-testid="pilot"
-          onClick={() => act(async () => { const r = await call<{ id: string }>("POST", `/api/studio/standards/${s.id}/pilot`, { format: pf, topic }); nav(`/producao/${r.id}`); })}>Solicitar piloto</button>
+          onClick={() => act(async () => { const r = await channelCall<{ id: string }>("POST", `/api/studio/standards/${s.id}/pilot`, { format: pf, topic }); nav(`/producao/${r.id}`); })}>Solicitar piloto</button>
         <span className="text-xs text-slate-500">O piloto nunca é publicado.</span></div>}
     </div>
   );
 }
 
-function Runs({ ch }: { ch: Channel }) {
+export function ChannelProducer({ ch }: { ch: Channel }) {
   const nav = useNavigate();
   const cur = ch.current;
   const fm = cur?.config.formats.filter((f) => f.enabled) ?? [];
@@ -213,11 +171,11 @@ function Runs({ ch }: { ch: Channel }) {
   const [script, setScript] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { if (!fmt && fm[0]) setFmt(fm[0].id); }, [fm, fmt]);
+  useEffect(() => { if (!fm.some(f => f.id === fmt)) setFmt(fm[0]?.id ?? ""); }, [fm, fmt]);
   const active = ch.runs.some((r) => ["queued", "running", "retrying"].includes(r.status));
   const go = async () => {
     setBusy(true); setErr(null);
-    try { const r = await call<{ id: string }>("POST", `/api/studio/factories/${ch.id}/channel/produce`, { format: fmt, topic, script_text: script }); nav(`/producao/${r.id}`); }
+    try { const r = await channelCall<{ id: string }>("POST", `/api/studio/factories/${ch.id}/channel/produce`, { format: fmt, topic, script_text: script }); nav(`/producao/${r.id}`); }
     catch (x) { setErr((x as Error).message); } finally { setBusy(false); }
   };
   return (
@@ -225,57 +183,40 @@ function Runs({ ch }: { ch: Channel }) {
       {cur ? (
         <div className={`${card} space-y-3 p-5`}><h2 className="font-semibold">Nova produção — usa o padrão v{cur.version}</h2>
           <div className="flex flex-wrap gap-3"><select className={`${input} !w-auto`} value={fmt} data-testid="p-format" onChange={(e) => setFmt(e.target.value)}>{fm.map((f) => <option key={f.id} value={f.id}>{FMT_LABEL[f.id]} · {f.min_seconds}–{f.max_seconds}s</option>)}</select>
-            <input className={`${input} flex-1`} value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Pauta / tema do vídeo (obrigatório nesta etapa)" data-testid="p-topic" /></div>
+            <input className={`${input} flex-1`} value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Pauta ou tema do vídeo" data-testid="p-topic" /></div>
           <textarea className={input} rows={3} value={script} onChange={(e) => setScript(e.target.value)} placeholder="Roteiro próprio (opcional — se vazio, a IA escreve dentro do padrão)" />
           {err && <Notice tone="error">{err}</Notice>}
-          <button className={primary} disabled={busy || active || !topic.trim()} data-testid="p-go" onClick={go}>Produzir vídeo</button>{active && <span className="ml-3 text-xs text-slate-400">Há uma produção em andamento.</span>}</div>
+          <button className={primary} disabled={busy || active || (!topic.trim() && !script.trim())} data-testid="p-go" onClick={go}>Produzir vídeo</button>{active && <span className="ml-3 text-xs text-slate-400">Há uma produção em andamento.</span>}</div>
       ) : <Notice>Aprove uma versão do Padrão do Canal (aba Identidade) para liberar a produção.</Notice>}
-      <div className="space-y-3">{ch.runs.length === 0 && <div className={`${card} p-5 text-sm text-slate-400`}>Nenhuma produção ainda.</div>}
-        {ch.runs.map((r) => (
-          <div key={r.id} className={`${card} p-4`} data-testid="run-row">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><Link className="text-cyan-300 hover:underline" to={`/producao/${r.id}`}>{r.title ?? "Produção"} · {new Date(r.created_at).toLocaleString("pt-BR")}</Link>
-              <span className="flex items-center gap-2"><span className="text-xs text-slate-400">{r.trigger === "pilot" ? "piloto · " : ""}{r.standard_version ? `padrão v${r.standard_version}` : "sem padrão (legado)"}{r.format ? ` · ${r.format === "vertical" ? "9:16" : "16:9"}` : ""}</span><Pill status={r.status} /></span></div>
-            {r.validation && <ul className="mt-2 grid gap-1 text-xs sm:grid-cols-2">{r.validation.checks.map((c) => <li key={c.name} className={c.ok ? "text-emerald-300" : "text-red-300"}>{c.ok ? "✔" : "✘"} {c.name}: {c.detail}</li>)}</ul>}
-            {r.error && <p className="mt-2 text-xs text-red-300">{r.error}</p>}
-          </div>))}</div>
+
     </div>
   );
 }
 
-export function ChannelCenter() {
-  const { id = "" } = useParams();
-  const { data: ch, error } = usePoll(() => call<Channel>("GET", `/api/studio/factories/${id}/channel`), [id], 3000);
-  const [tab, setTab] = useState<"identidade" | "producoes">("identidade");
+export function ChannelIdentity({ ch, reload }: { ch: Channel; reload: () => Promise<void> }) {
   const [editing, setEditing] = useState<Partial<Cfg> | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
-  const [snap, setSnap] = useState<Channel | null>(null);
-  useEffect(() => { if (ch) setSnap(ch); }, [ch, tick]);
-  const reload = async () => setSnap(await call<Channel>("GET", `/api/studio/factories/${id}/channel`));
-  if (error && !snap) return <Notice tone="error">Fábrica não encontrada.</Notice>;
-  if (!snap) return <p className="text-sm text-slate-400">Carregando…</p>;
-  const c = snap;
-  const propose = async (cfg: Cfg, pending: string[]) => {
+  const propose = async (config: Cfg, pending: string[]) => {
     setBusy(true); setErr(null);
-    try { await call("POST", `/api/studio/factories/${id}/standards`, { config: cfg, pending, origin: "manual" }); setEditing(null); setTick((t) => t + 1); await reload(); }
-    catch (x) { setErr((x as Error).message); } finally { setBusy(false); }
+    try {
+      await channelCall("POST", `/api/studio/factories/${ch.id}/standards`, { config, pending, origin: "manual" });
+      setEditing(null); await reload();
+    } catch (x) { setErr((x as Error).message); } finally { setBusy(false); }
   };
-  const base = editing ?? null;
-  return (
-    <div className="space-y-6">
-      <div><Link to="/fabricas" className="text-sm text-cyan-300 hover:underline">← Minhas Fábricas</Link><h1 className="mt-1 text-2xl font-semibold" data-testid="channel-name">{c.name}</h1>
-        <p className="text-sm text-slate-400">{c.current ? `Padrão vigente: versão ${c.current.version}` : c.legacy ? "Fábrica sem Padrão do Canal versionado (modo anterior)." : "Nenhuma versão aprovada ainda."}</p></div>
-      <div className="flex gap-2">{(["identidade", "producoes"] as const).map((t) => <button key={t} className={tab === t ? primary : ghost} onClick={() => setTab(t)} data-testid={`tab-${t}`}>{t === "identidade" ? "Identidade" : "Produções"}</button>)}</div>
-      {tab === "producoes" ? <Runs ch={c} /> : (
-        <div className="space-y-6">
-          {c.legacy && <Notice>Esta fábrica foi criada antes do Padrão do Canal e continua funcionando como antes. Para versionar e aprovar um padrão, crie-o a partir da configuração atual.</Notice>}
-          {err && <Notice tone="error">{err}</Notice>}
-          {base ? <div className={`${card} p-5`}><h2 className="mb-4 font-semibold">{c.standards.length ? "Propor nova versão" : "Criar Padrão do Canal"}</h2>
-            <StandardForm initial={base} busy={busy} submitLabel="Salvar como proposta" onSubmit={propose} /><button className={`${ghost} mt-3`} onClick={() => setEditing(null)}>Cancelar</button></div>
-            : <button className={ghost} data-testid="new-version" onClick={() => setEditing(c.standards[0]?.config ?? c.legacy_config ?? {})}>{c.standards.length ? "Propor nova versão" : "Criar Padrão do Canal a partir desta fábrica"}</button>}
-          {c.standards.map((s) => <StdCard key={s.id} s={s} ch={c} reload={reload} />)}
-        </div>)}
+  return <div className="space-y-5">
+    <div className={`${card} space-y-3 p-5`}>
+      <h2 className="text-lg font-semibold">Padrão criativo do canal</h2>
+      <p className="text-sm text-slate-300">{ch.current ? `Padrão vigente: versão ${ch.current.version}. As produções usam esta identidade aprovada.` : ch.legacy ? "Esta fábrica mantém o funcionamento anterior. Você pode criar seu primeiro padrão a partir da identidade atual." : "Aprove uma proposta para liberar as produções desta fábrica."}</p>
+      <div className="flex flex-wrap gap-3"><Link className={ghost} to={`/vozes?fabrica=${ch.id}`}>Comparar e selecionar narrador</Link>
+      {!editing && <button className={ghost} data-testid="new-version" onClick={() => setEditing(ch.current?.config ?? ch.standards[0]?.config ?? ch.legacy_config ?? {})}>{ch.standards.length ? "Propor nova versão" : "Criar Padrão do Canal a partir desta fábrica"}</button>}</div>
     </div>
-  );
+    {err && <Notice tone="error">{err}</Notice>}
+    {editing && <div className={`${card} p-5`}>
+      <h3 className="mb-4 font-semibold">Revisar nova proposta</h3>
+      <StandardForm initial={editing} assumed={ch.current ? [] : ch.standards[0]?.pending ?? []} busy={busy} submitLabel="Salvar como proposta" onSubmit={propose} />
+      <button className={`${ghost} mt-3`} onClick={() => setEditing(null)}>Cancelar</button>
+    </div>}
+    {ch.standards.map(s => <StdCard key={s.id} s={s} ch={ch} reload={() => { void reload(); }} />)}
+  </div>;
 }
