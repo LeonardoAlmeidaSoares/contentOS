@@ -54,6 +54,9 @@ class RunSummary(BaseModel):
     line_name: str | None
     pipeline: str
     trigger: str
+    standard_id: str | None = None
+    standard_version: int | None = None
+    format: str | None = None
     status: str
     error: str | None
     cost: float
@@ -209,6 +212,12 @@ def update_line(line_id: str, body: LinePatch, db: Session = Depends(get_db)):
     line = _line(db, line_id)
     if line.archived_at:
         raise HTTPException(409, "linha arquivada: desarquive para editar")
+    from app.studio.models import ChannelStandard
+    versioned = db.scalar(select(ChannelStandard.id).where(ChannelStandard.line_id == line_id).limit(1))
+    changed_identity = any(k in body.model_fields_set and getattr(line, k) != getattr(body, k)
+                           for k in ("config", "name", "description", "interval_minutes"))
+    if versioned and changed_identity:
+        raise HTTPException(409, "esta fábrica usa Padrão do Canal: altere a identidade por uma nova proposta; agendamento ainda não está disponível")
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(line, k, v)
     if "interval_minutes" in body.model_fields_set:

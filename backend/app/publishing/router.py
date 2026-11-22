@@ -67,6 +67,7 @@ def _summary(db: Session, run: Run, rev: VideoReview | None) -> dict:
     pubs = db.scalars(select(YouTubePublication).where(YouTubePublication.run_id == run.id)
                       .order_by(YouTubePublication.created_at.desc())).all()
     return {"run_id": run.id, "factory_id": run.line_id, "factory_name": run.line_name,
+            "standard_version": run.standard_version, "format": run.format,
             "title": _defaults(run)["title"], "duration_seconds": ex.get("duration_seconds"), "created_at": run.created_at,
             "video_artifact_id": _art(run, "video.mp4"), "thumbnail_artifact_id": _art(run, "miniatura.jpg"),
             "review": {"status": rev.status if rev else "pending", "note": rev.note if rev else "",

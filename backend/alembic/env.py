@@ -7,6 +7,8 @@ from app.lab import models as _lab  # noqa: F401
 from app.providers import models as _prov  # noqa: F401
 from app.publishing import models as _pub  # noqa: F401
 from app.runs import models  # noqa: F401
+from app.studio import models as _standards  # noqa: F401
+from app.voices import models as _voices  # noqa: F401
 
 target_metadata = Base.metadata
 

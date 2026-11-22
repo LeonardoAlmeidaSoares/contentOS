@@ -158,14 +158,24 @@ def _line(db: Session, lid: str) -> ProductionLine:
 
 @router.get("/factories/{lid}")
 def factory_voice(lid: str, db: Session = Depends(get_db)):
-    v = FactoryConfig.model_validate(_line(db, lid).config).voice
+    from app.studio.standards import current, standards_of
+    line = _line(db, lid)
+    versions = standards_of(db, lid)
+    approved = current(db, lid)
+    config = approved.config if approved else (versions[0].config if versions else line.config)
+    v = FactoryConfig.model_validate(config).voice
     p, vid = service.effective(v)
-    return {"voice": v.model_dump(), "provider": p, "voice_id": vid, "legacy": v.provider is None}
+    return {"voice": v.model_dump(), "provider": p, "voice_id": vid, "legacy": v.provider is None,
+            "versioned": bool(versions), "standard_version": approved.version if approved else None,
+            "awaiting_approval": bool(versions) and approved is None}
 
 
 @router.put("/factories/{lid}")
 def set_factory_voice(lid: str, body: IdentityIn, db: Session = Depends(get_db)):
     line = _line(db, lid)
+    from app.studio.standards import current, propose, standards_of
+    versions = standards_of(db, lid)
+    approved = current(db, lid)
     try:
         e = service.check(body.provider, body.voice_id)
     except VoiceError as exc:
@@ -173,7 +183,7 @@ def set_factory_voice(lid: str, body: IdentityIn, db: Session = Depends(get_db))
     ok, why = e.available()
     if not ok:
         raise HTTPException(412, f"{e.label} indisponível: {why}")
-    cfg = FactoryConfig.model_validate(line.config)
+    cfg = FactoryConfig.model_validate(approved.config if approved else (versions[0].config if versions else line.config))
     v = cfg.voice
     v.provider, v.voice_id, v.speed, v.pitch, v.fallback = body.provider, body.voice_id, body.speed, body.pitch, body.fallback
     v.style = body.style.strip() if e.controls.get("style") else ""
@@ -181,6 +191,11 @@ def set_factory_voice(lid: str, body: IdentityIn, db: Session = Depends(get_db))
     v.engine = "espeak" if body.provider == "espeak" else "piper"  # campo legado
     label = next(x.label for x in e.voices() if x.id == body.voice_id)
     v.description = f"{label} ({e.label})"
+    if versions:
+        v.fallback = False
+        proposal = propose(db, line, cfg, note="Seleção de narrador pelo Laboratório de Vozes",
+                           pending=versions[0].pending if not approved else [], origin="manual")
+        return {**factory_voice(lid, db), "proposal": {"id": proposal.id, "version": proposal.version, "status": proposal.status}}
     line.config = cfg.identity()
     db.commit()
     return factory_voice(lid, db)

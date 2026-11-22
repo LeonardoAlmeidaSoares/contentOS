@@ -238,7 +238,7 @@ def create_channel(body: ChannelIn, db: Session = Depends(get_db)):
     bad = problems(cfg)
     if bad:
         raise HTTPException(422, " ".join(bad))
-    line = ProductionLine(name=cfg.name, description=cfg.niche or cfg.theme, pipeline=PIPELINE, active=False, config={},
+    line = ProductionLine(name=cfg.name, description=cfg.niche or cfg.theme, pipeline=PIPELINE, active=False, config=cfg.identity(),
                           cost_limit_run=1, cost_limit_month=10, max_attempts=3, backoff_seconds=20)
     db.add(line)
     db.commit()
