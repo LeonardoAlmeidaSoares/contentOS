@@ -12,6 +12,9 @@ test("início, instrução do Gemini e conversa sem chave (nada simulado)", asyn
   await expect(page).toHaveURL(/fabricas\/nova/);
   if (!st.gemini.configured) {
     await expect(page.getByText("Gemini não configurado")).toBeVisible();
+    await expect(page.getByTestId("confirm-create")).toHaveCount(0);
+    await page.getByRole("link", { name: "Configurar assistente" }).click();
+    await page.getByText("Como conectar o assistente", { exact: true }).click();
     await expect(page.getByText("GEMINI_API_KEY").first()).toBeVisible();
   } else {
     await expect(page.getByTestId("msg-assistant").first()).toBeVisible({ timeout: 60_000 });
@@ -37,5 +40,13 @@ test("fábrica: produzir vídeo real, reproduzir e baixar", async ({ page, reque
   const dl = await request.get((await page.getByTestId("download").getAttribute("href"))!);
   expect(dl.status()).toBe(200);
   expect((await dl.body()).subarray(4, 8).toString()).toBe("ftyp");
-  await page.screenshot({ path: "studio-production.png", fullPage: true });
+  await page.screenshot({ path: "../.cache/studio-production.png", fullPage: true });
+  await page.goto(`/fabricas/${id}`);
+  const materials = page.getByRole("region", { name: "Produção e materiais" });
+  await expect(materials.getByRole("heading", { name: "Materiais do conteúdo" })).toBeVisible();
+  await expect(materials.getByRole("list", { name: "Etapas da produção" }).getByRole("listitem")).toHaveCount(7);
+  await materials.getByText("Ver roteiro", { exact: true }).click();
+  await expect(materials.getByText(SCRIPT, { exact: true })).toBeVisible();
+  await expect(materials.locator("audio")).toBeVisible();
+  await expect(materials.getByRole("link", { name: "Abrir produção e todos os arquivos" })).toHaveAttribute("href", /producao\//);
 });
