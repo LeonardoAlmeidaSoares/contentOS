@@ -140,17 +140,19 @@ def test_horizontal_production_uses_approved_version_and_is_validated(prod, tmp_
     assert meta["standard_version"] == 1 and meta["format"] == "horizontal" and meta["validation"]["ok"]
 
 
-def test_vertical_format_is_really_9x16(prod, tmp_path):
+@pytest.mark.parametrize("ken_burns", [True, False])
+def test_vertical_format_is_really_9x16(prod, tmp_path, ken_burns):
     cfg = std_cfg(formats=[{"id": "horizontal", "enabled": True, "min_seconds": 10, "max_seconds": 120},
                            {"id": "vertical", "enabled": True, "min_seconds": 10, "max_seconds": 120}])
-    lid, s1 = create(prod, **{k: cfg[k] for k in ("formats",)})
+    lid, s1 = create(prod, formats=cfg["formats"], editing={"ken_burns": ken_burns})
     approve(prod, s1["id"])
     r = prod.c.post(f"/api/studio/factories/{lid}/channel/produce", json={"format": "vertical", "script_text": SCRIPT, "topic": "A casa"})
     prod.drain()
     run = prod.get(r.json()["id"])
     assert run["status"] == "succeeded", run
-    v, _ = probe(prod, run, tmp_path)
+    v, duration = probe(prod, run, tmp_path)
     assert (v["width"], v["height"]) == (720, 1280)
+    assert 10 <= duration <= 120
 
 
 def test_format_not_enabled_is_refused(prod):

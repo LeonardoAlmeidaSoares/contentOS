@@ -376,7 +376,9 @@ def render(ctx: StepContext) -> StepResult:
                           f"zoompan=z='{z}':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:fps={FPS},format=yuv420p")
                 else:
                     vf = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS},format=yuv420p"
-                vin = ["-i", img]
+                # zoompan expands one image into all frames. A static image must
+                # instead loop for the entire narration, or FFmpeg stops early.
+                vin = ["-i", img] if c.editing.ken_burns else ["-loop", "1", "-framerate", str(FPS), "-i", img]
             else:
                 vin, vf = ["-f", "lavfi", "-i", f"color=c=0x0b2530:s={W}x{H}:r={FPS}"], "format=yuv420p"
             _run(["ffmpeg", "-y", *vin, "-i", wav, "-vf", vf, "-af", "apad", "-frames:v", str(frames), "-t", f"{dur:.3f}",
