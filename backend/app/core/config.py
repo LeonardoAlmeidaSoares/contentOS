@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     lab_month_limit_usd: float = 10.0  # teto mensal de gastos do Laboratório
     gemini_api_key: str = ""       # chave da Gemini API (variável de ambiente GEMINI_API_KEY; nunca persistida)
     gemini_text_model: str = "gemini-3.1-flash-lite"  # modelo com camada gratuita; troque por env se necessário
+    gemini_tts_model: str = "gemini-3.8-flash-lite-tts"  # modelo TTS (cota gratuita é POR MODELO: 10 req/dia no lite)
     pexels_api_key: str = ""       # opcional: fonte de imagens (gratuita, requer chave)
     media_user_agent: str = "ContentOS/1.0 (internal studio)"
     tts_piper_model: str = "/opt/piper/pt_BR-faber-medium.onnx"

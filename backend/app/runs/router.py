@@ -165,9 +165,9 @@ def _line(db: Session, line_id: str) -> ProductionLine:
     return line
 
 
-def _conflict(fn, *a):
+def _conflict(fn, *a, **kw):
     try:
-        return fn(*a)
+        return fn(*a, **kw)
     except service.Conflict as exc:
         raise HTTPException(409, str(exc)) from None
     except LookupError:

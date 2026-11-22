@@ -77,7 +77,7 @@ def _summary(db: Session, run: Run, rev: VideoReview | None) -> dict:
 # ---------- aprovações ----------
 @router.get("/approvals")
 def list_approvals(status: str = "pending", db: Session = Depends(get_db)):
-    runs = db.scalars(select(Run).where(Run.pipeline == "video_youtube", Run.status == "succeeded")
+    runs = db.scalars(select(Run).where(Run.pipeline == "video_youtube", Run.status == "succeeded", Run.trigger != "pilot")
                       .order_by(Run.created_at.desc()).limit(200)).all()
     revs = {r.run_id: r for r in db.scalars(select(VideoReview))}
     out = [_summary(db, r, revs.get(r.id)) for r in runs]

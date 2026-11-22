@@ -14,7 +14,7 @@ from app.core.db import SessionLocal
 from app.core.storage import get_storage
 from app.providers.adapters import ADAPTERS
 from app.providers.adapters.base import ProviderError, TextRequest
-from app.providers.adapters.gemini import free_text_models
+from app.providers.adapters.gemini import free_text_models, free_tts_models
 from app.providers.gateway import AIError, AIGateway
 from app.providers.models import Provider
 from app.studio.schemas import FactoryConfig, preview
@@ -37,6 +37,7 @@ def ensure_provider(db) -> Provider:
     models = free_text_models()
     if settings.gemini_text_model not in [m["id"] for m in models]:
         models.insert(0, {**models[0], "id": settings.gemini_text_model})
+    models += free_tts_models()
     if p is None:
         p = Provider(name=GEMINI_ENV_NAME, service="gemini", config={"api": "generate_content", "key_source": "env"},
                      models=models, active=True, status="unknown", limit_month_usd=Decimal(1))  # teto de segurança
@@ -96,17 +97,28 @@ def parse_json(text: str) -> dict:
 SYSTEM = """Você é o assistente do ContentOS Studio, que cria "fábricas" de vídeos para YouTube a partir de uma conversa.
 Interprete o pedido do usuário (em português) e devolva SOMENTE um JSON com:
 {"status": "need_info" | "ready", "message": "texto curto e amigável em pt-BR", "questions": ["..."],
- "config": {"name": str, "theme": str, "audience": str, "video_minutes": number, "frequency_per_week": number,
- "narrative_style": str, "visual_style": str,
- "voice": {"engine": "piper", "speed": 0.6-1.5, "pitch": 0-99, "description": str},
+ "assumed": ["campos de config que o usuário NÃO especificou e você apenas sugeriu"],
+ "config": {"name": str, "channel_name": str, "niche": str, "theme": str, "description": str (proposta editorial), "audience": str,
+ "language": "pt-BR", "video_minutes": number, "frequency_per_week": number, "tone": str, "narrative_style": str, "visual_style": str,
+ "editing_rhythm": "lento"|"medio"|"rapido", "references": str, "restrictions": str, "forbidden_terms": [str],
+ "formats": [{"id": "horizontal"|"vertical", "enabled": true, "min_seconds": int, "max_seconds": int}],
+ "voice": {"provider": "piper"|"kokoro"|"gemini", "voice_id": str, "language": "pt-BR", "style": str (direção de narração), "speed": 0.6-1.5,
+           "pitch": 0-99, "description": str, "fallback": false},
  "editing": {"subtitles": bool, "ken_burns": bool, "resolution": "720p"|"1080p", "credits": bool}}}
+- "horizontal" = 16:9 (vídeos longos); "vertical" = 9:16 (Shorts/Reels). Duração em SEGUNDOS por formato (ex.: 10 min = 480 a 720).
+  Use somente os formatos pedidos; se o usuário não disse o formato, sugira horizontal e liste "formats" em "assumed".
+- Tudo o que o usuário não disse e você preencheu por sugestão DEVE constar em "assumed" (nunca trate como decisão dele).
+  Em "assumed" use só nomes curtos de campos (ex.: "formatos", "voz", "público", "estilo visual", "tom"), nunca frases.
+- Se o usuário deu um nome ao canal/fábrica, use EXATAMENTE esse nome em "name" e "channel_name" (sem acrescentar palavras).
+- Se o usuário não escolheu a voz, proponha uma entre as disponíveis e inclua "voz" em "assumed".
+- Vozes disponíveis (use apenas estes provider/voice_id): {VOICES}
 Regras:
 - Pergunte (status need_info) SOMENTE se faltar o essencial: o tema/nicho do canal. Nunca pergunte o que dá para inferir ou
   que tenha um bom padrão (duração 5 min, frequência 0 = sob demanda, legendas ligadas, resolução 720p).
 - No máximo 2 perguntas, simples, sem jargão técnico.
 - Quando status ready, preencha TODOS os campos de config com valores coerentes com o pedido. "name" deve ser um nome
   curto e atraente para a fábrica. frequency_per_week é número de vídeos por semana.
-- Voz: "speed" menor (0.85-0.95) para narração sombria/calma; maior para energética. Só existe voz masculina neutra em pt-BR.
+- Voz: "speed" menor (0.85-0.95) para narração sombria/calma; maior para energética. fallback sempre false (sem troca silenciosa de voz).
 - Imagens vêm de bancos de imagens livres (fotos reais), não de IA: reflita isso em visual_style de modo realista.
 - Não invente funcionalidades como publicar no YouTube."""
 
@@ -119,8 +131,24 @@ def _history(messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _voice_help() -> str:
+    """Vozes que o assistente pode propor. Não consulta a rede (o Gemini lista só as aprovadas)."""
+    from app.voices import service as vs
+    parts = []
+    for pid, e in vs.ENGINES.items():
+        if pid == "espeak" or not e.available()[0]:
+            continue
+        parts.append(f"{pid}: " + (", ".join(vs.APPROVED) + " (aprovadas; existem outras pt-br-*)" if pid == "gemini"
+                                   else ", ".join(v.id for v in e.voices()[:8])))
+    return "; ".join(parts) or "piper: faber"
+
+
+def _system() -> str:
+    return SYSTEM.replace("{VOICES}", _voice_help())
+
+
 def interpret(messages: list[dict]) -> dict:
-    data, out = call_json(SYSTEM, "Conversa até agora:\n" + _history(messages))
+    data, out = call_json(_system(), "Conversa até agora:\n" + _history(messages))
     return _build(data, out)
 
 
@@ -131,7 +159,7 @@ configuração COMPLETA atualizada (altere só o que o pedido exige; mantenha o 
 
 def adjust(current: dict, instruction: str) -> dict:
     prompt = f"Configuração atual: {json.dumps(current, ensure_ascii=False)}\nPedido de ajuste: {instruction[:1500]}"
-    data, out = call_json(ADJUST_SYSTEM, prompt)
+    data, out = call_json(ADJUST_SYSTEM.replace("{VOICES}", _voice_help()), prompt)
     r = _build(data, out)
     if r["status"] != "ready":
         return r
@@ -151,10 +179,14 @@ def _build(data: dict, out) -> dict:
         if cfg is None or not cfg.theme:
             return {"status": "need_info", "message": msg or "Sobre qual tema será a fábrica?",
                     "questions": questions or ["Sobre qual tema ou nicho será o canal?"], "proposal": None, "usage": usage}
-        cfg.voice.engine = "piper"
+        if not cfg.voice.provider:
+            cfg.voice.engine = "piper"
+        cfg.voice.fallback = False  # padrão de canal: nunca trocar de voz silenciosamente
         if not cfg.name:
             cfg.name = cfg.theme[:60]
+        cfg.theme = cfg.theme or cfg.niche
+        assumed = [str(a)[:60] for a in (data.get("assumed") or []) if isinstance(a, (str, int))][:20]
         return {"status": "ready", "message": msg, "questions": [], "usage": usage,
-                "proposal": {"config": cfg.identity(), "preview": preview(cfg)}}
+                "proposal": {"config": cfg.identity(), "preview": preview(cfg), "assumed": assumed}}
     return {"status": "need_info", "message": msg, "questions": questions or ["Sobre qual tema será a fábrica?"],
             "proposal": None, "usage": usage}

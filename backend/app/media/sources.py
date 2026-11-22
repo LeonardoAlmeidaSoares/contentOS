@@ -53,6 +53,7 @@ def search_pexels(query: str, used: set[str]) -> Image | None:
             if not url or url in used:
                 continue
             data = _get(c, url).content
+            used.add(url)  # a checagem acima compara a URL de download, não a da página
             return Image(data, "pexels", p.get("url", url), p.get("alt") or query, p.get("photographer", ""), "Pexels License")
     return None
 
@@ -78,6 +79,7 @@ def search_wikimedia(query: str, used: set[str]) -> Image | None:
             if not url or url in used:
                 continue
             data = _get(c, url).content
+            used.add(url)
             return Image(data, "wikimedia", info.get("descriptionurl", url), _strip(p.get("title", "")).removeprefix("File:"),
                          _strip((meta.get("Artist") or {}).get("value", "")), lic)
     return None

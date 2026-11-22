@@ -36,6 +36,8 @@ def reviewable_run(db: Session, run_id: str) -> Run:
     run = db.get(Run, run_id)
     if run is None or run.pipeline != "video_youtube":
         raise LookupError("produção não encontrada")
+    if run.trigger == "pilot":
+        raise LookupError("vídeo-piloto não entra na fila de revisão/publicação")
     return run
 
 

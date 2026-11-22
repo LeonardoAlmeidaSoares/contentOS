@@ -35,6 +35,7 @@ class StepContext:
     attempt: int  # tentativas totais desta etapa (1 = primeira)
     ai: object | None = None  # AIGateway (providers/gateway.py): única porta para provedores de IA
     logs: list = field(default_factory=list)
+    fallback: dict | None = None  # preenchido por etapas que trocam de provedor (visível no resultado)
     storage: object | None = None  # somente leitura: etapas leem artefatos de etapas anteriores; quem grava é o executor
 
     def read(self, key: str) -> bytes:
