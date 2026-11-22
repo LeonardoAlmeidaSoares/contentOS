@@ -13,6 +13,7 @@ from app.runs import service, tasks
 from app.runs.models import ProductionLine
 from app.runs.router import _conflict, run_full
 from app.studio import assistant
+from app.voices import service as voices_service
 from app.studio.schemas import FactoryConfig, preview
 
 router = APIRouter(prefix="/api/studio", tags=["studio"])
@@ -66,7 +67,8 @@ def status():
                            "e execute 'docker compose up -d'."},
         "images": {"wikimedia": True, "pexels": bool(settings.pexels_api_key),
                    "help": "Wikimedia Commons funciona sem chave. Para mais variedade, defina PEXELS_API_KEY (gratuita)."},
-        "voice": {"engines": tts.available_engines()},
+        "voice": {"engines": tts.available_engines(),
+                  "providers": [{"id": p["id"], "available": p["available"]} for p in voices_service.catalog()]},
         "ffmpeg": shutil.which("ffmpeg") is not None,
     }
 

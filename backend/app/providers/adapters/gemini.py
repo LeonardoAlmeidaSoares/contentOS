@@ -1,7 +1,7 @@
 """Google Gemini — docs: aistudio.google.com/docs (Interactions API, image-generation, pricing)."""
 import base64
 
-from .base import (AIResult, Adapter, Conn, Estimate, ImageOut, ImageRequest, ProviderError, TextRequest, D, b64, request,
+from .base import (AIResult, Adapter, Conn, Estimate, ImageOut, ImageRequest, ProviderError, SpeechRequest, TextRequest, D, approx_tokens, b64, request,
                    token_text_actual, token_text_estimate)
 
 API_REVISION = "2026-05-20"
@@ -14,10 +14,31 @@ def _headers(conn: Conn) -> dict:
     return {"x-goog-api-key": conn.api_key or "", "Api-Revision": API_REVISION}
 
 
+def pcm_to_wav(pcm: bytes, rate: int = 24000) -> bytes:
+    import io
+    import wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1), w.setsampwidth(2), w.setframerate(rate)
+        w.writeframes(pcm)
+    return buf.getvalue()
+
+
 def free_text_models() -> list[dict]:
     """Modelos com camada gratuita (custo 0 enquanto a chave não tiver faturamento ativo)."""
     return [{"id": m, "capabilities": ["text"], "active": True, "note": "camada gratuita (US$ 0 sem faturamento)",
              "pricing": {"input_per_mtok": 0, "output_per_mtok": 0}} for m in ("gemini-2.5-flash", "gemini-2.5-flash-lite")]
+
+
+TTS_MODELS = ("gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-3.1-flash-tts-preview")
+AUDIO_TOKENS_PER_SEC = 25  # doc oficial: 25 tokens de áudio por segundo
+CHARS_PER_SEC_MIN = 8  # estimativa conservadora da duração: texto/8 caracteres por segundo
+
+
+def free_tts_models() -> list[dict]:
+    """Modelos TTS com camada gratuita (custo 0 enquanto a chave não tiver faturamento ativo)."""
+    return [{"id": m, "capabilities": ["speech"], "active": True, "note": "camada gratuita (US$ 0 sem faturamento)",
+             "pricing": {"input_per_mtok": 0, "output_per_mtok": 0}} for m in TTS_MODELS]
 
 
 def _img(sizes: dict, refs: int, extra=None) -> dict:
@@ -30,7 +51,7 @@ class GeminiAdapter(Adapter):
     service = "gemini"
     label = "Google Gemini"
     default_base_url = "https://generativelanguage.googleapis.com/v1beta"
-    capabilities = ("text", "image")
+    capabilities = ("text", "image", "speech")
     pricing_source = "aistudio.google.com/docs/pricing (conferido em 2026-11-15, camada paga padrão)"
     known_models = [
         {"id": "gemini-3.1-flash-lite", "capabilities": ["text"], "active": True,
@@ -55,6 +76,14 @@ class GeminiAdapter(Adapter):
         return f"{len(j.get('models', []))} modelos visíveis"
 
     def estimate(self, capability, mcfg, req):
+        if capability == "speech":
+            p = mcfg.get("pricing") or {}
+            if "input_per_mtok" not in p or "output_per_mtok" not in p:
+                return Estimate(None, "preço do modelo TTS não configurado")
+            secs = max(3, len(req.text) / CHARS_PER_SEC_MIN)
+            tin, tout = approx_tokens(req.text + (req.style or "")), int(secs * AUDIO_TOKENS_PER_SEC)
+            cost = (D(tin) * D(p["input_per_mtok"]) + D(tout) * D(p["output_per_mtok"])) / D(1_000_000)
+            return Estimate(cost, f"≤ {tin} tokens de texto + ~{tout} de áudio (25 tokens/s)")
         if capability == "text":
             return token_text_estimate(mcfg, req)
         sup, p = mcfg.get("supports", {}), mcfg.get("pricing", {})
@@ -115,6 +144,39 @@ class GeminiAdapter(Adapter):
         text = "".join(c.get("text", "") for c in self._blocks(j, "text")) or j.get("output_text") or ""
         usage = j.get("usage") or {}
         return AIResult(model, text=text, request_id=j.get("id"), usage_raw=usage or None)  # campos de uso não documentados: custo = estimativa
+
+    def speech(self, conn, model, req: SpeechRequest, mcfg):
+        """generateContent com responseModalities=AUDIO. Formato verificado contra a API real em 2026-11-21 (WAV 24 kHz mono)."""
+        part = {"text": req.text}
+        if req.style:
+            part["speech_metadata"] = {"style": req.style}
+        body = {"contents": [{"role": "user", "parts": [part]}],
+                "generationConfig": {"responseModalities": ["AUDIO"],
+                                     "speechConfig": {"languageCode": req.language,
+                                                      "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": req.voice}}}}}
+        j = request("POST", f"{conn.base_url}/models/{model}:generateContent", headers=_headers(conn), json=body).json()
+        cands = j.get("candidates") or []
+        if not cands:
+            reason = (j.get("promptFeedback") or {}).get("blockReason", "sem candidatos")
+            raise ProviderError(f"resposta bloqueada ou vazia ({reason})")
+        parts = (cands[0].get("content") or {}).get("parts", [])
+        blob = next((p["inlineData"] for p in parts if p.get("inlineData", {}).get("data")), None)
+        if blob is None:
+            raise ProviderError(f"resposta sem áudio (finishReason={cands[0].get('finishReason')})")
+        pcm_or_wav = b64(blob["data"])
+        mime = blob.get("mimeType", "")
+        if not pcm_or_wav[:4] == b"RIFF":
+            if "l16" not in mime.lower():
+                raise ProviderError(f"formato de áudio inesperado: {mime[:40]}")
+            rate = 24000
+            for t in mime.split(";"):
+                if t.strip().startswith("rate="):
+                    rate = int(t.strip()[5:])
+            pcm_or_wav = pcm_to_wav(pcm_or_wav, rate)
+        u = j.get("usageMetadata") or {}
+        return AIResult(model, audio=pcm_or_wav, input_tokens=u.get("promptTokenCount"), output_tokens=u.get("candidatesTokenCount"),
+                        cost_actual=token_text_actual(mcfg, u.get("promptTokenCount"), u.get("candidatesTokenCount")),
+                        cost_source="computed", request_id=j.get("responseId"), usage_raw=u or None)
 
     def image(self, conn, model, req: ImageRequest, mcfg):
         content = [{"type": "text", "text": req.prompt}] + [

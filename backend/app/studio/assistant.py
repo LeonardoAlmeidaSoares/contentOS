@@ -14,7 +14,7 @@ from app.core.db import SessionLocal
 from app.core.storage import get_storage
 from app.providers.adapters import ADAPTERS
 from app.providers.adapters.base import ProviderError, TextRequest
-from app.providers.adapters.gemini import free_text_models
+from app.providers.adapters.gemini import free_text_models, free_tts_models
 from app.providers.gateway import AIError, AIGateway
 from app.providers.models import Provider
 from app.studio.schemas import FactoryConfig, preview
@@ -37,6 +37,7 @@ def ensure_provider(db) -> Provider:
     models = free_text_models()
     if settings.gemini_text_model not in [m["id"] for m in models]:
         models.insert(0, {**models[0], "id": settings.gemini_text_model})
+    models += free_tts_models()
     if p is None:
         p = Provider(name=GEMINI_ENV_NAME, service="gemini", config={"api": "generate_content", "key_source": "env"},
                      models=models, active=True, status="unknown", limit_month_usd=Decimal(1))  # teto de segurança

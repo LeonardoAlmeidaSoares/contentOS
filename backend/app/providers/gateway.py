@@ -19,7 +19,7 @@ from app.core.config import settings
 from app.core.storage import Storage
 from app.pipelines.registry import OutFile
 from app.providers.adapters import ADAPTERS
-from app.providers.adapters.base import AIResult, Conn, ImageRequest, ProviderError, TextRequest, D
+from app.providers.adapters.base import AIResult, Conn, ImageRequest, ProviderError, SpeechRequest, TextRequest, D
 from app.providers.ledger import ledger_sum
 from app.providers.models import COUNTED, AIUsage, Provider
 from app.runs.models import Run, now
@@ -117,6 +117,9 @@ class AIGateway:
             req.references = [(sniff_mime(d), d) for d in (self.storage.get(k) for k in reference_keys)]
         return self._call(provider_id, model, "image", req, key, allow_unknown_cost)
 
+    def speech(self, provider_id: str, model: str, req: SpeechRequest, key: str, allow_unknown_cost=False) -> Outcome:
+        return self._call(provider_id, model, "speech", req, key, allow_unknown_cost)
+
     # -- núcleo --------------------------------------------------------------
     def _call(self, provider_id, model, capability, req, key, allow_unknown) -> Outcome:
         with self.sf() as db:
@@ -164,7 +167,8 @@ class AIGateway:
         t0 = time.monotonic()
         adapter = ADAPTERS[conn.service]
         try:
-            res: AIResult = adapter.text(conn, model, req, mcfg) if capability == "text" else adapter.image(conn, model, req, mcfg)
+            res: AIResult = (adapter.text if capability == "text" else adapter.speech if capability == "speech"
+                             else adapter.image)(conn, model, req, mcfg)
         except ProviderError as exc:
             self._fail(usage_id, provider_id, scrub(str(exc), secret), exc.uncertain, int((time.monotonic() - t0) * 1000))
             err = ProviderError(scrub(str(exc), secret), exc.status, exc.uncertain)
@@ -186,6 +190,13 @@ class AIGateway:
                                  provider=prov_name, model=model, meta=meta))
             stored.append({"key": skey, "filename": files[-1].filename, "mime": img.mime, "meta": meta})
 
+        if res.audio:
+            skey = f"ai/{usage_id}/1.wav"
+            self.storage.put(skey, res.audio, "audio/wav")
+            files.append(OutFile(f"{model}-{usage_id[:8]}.wav", "audio/wav", storage_key=skey, provider=prov_name, model=model,
+                                 meta={"size": len(res.audio)}))
+            stored.append({"key": skey, "filename": files[-1].filename, "mime": "audio/wav", "meta": files[-1].meta})
+
         with self.sf() as db:
             u = db.get(AIUsage, usage_id)
             u.status, u.finished_at, u.duration_ms, u.request_id = "succeeded", now(), dur, res.request_id
@@ -194,6 +205,8 @@ class AIGateway:
             u.cost_source = res.cost_source if res.cost_actual is not None else "estimate"
             u.cost_effective = res.cost_actual if res.cost_actual is not None else u.cost_estimated
             u.result = {"text": res.text, "files": stored, "usage": res.usage_raw, "provider": prov_name}
+            if capability == "speech":  # trilha de auditoria: voz/idioma/estilo realmente enviados ao provedor
+                u.result["request"] = {"voice": req.voice, "language": req.language, "style": req.style, "chars": len(req.text)}
             p = db.get(Provider, provider_id)
             p.status, p.status_message, p.status_checked_at = "ok", None, now()
             db.commit()

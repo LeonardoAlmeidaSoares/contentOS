@@ -5,10 +5,18 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class Voice(BaseModel):
+    """Identidade vocal. `engine` é o campo legado (fábricas antigas); `provider`/`voice_id` o substituem quando presentes."""
     engine: Literal["piper", "espeak"] = "piper"
     speed: float = Field(1.0, ge=0.6, le=1.5)
     pitch: int = Field(40, ge=0, le=99)  # só eSpeak
     description: str = "Narrador masculino, tom neutro"
+    provider: Literal["piper", "kokoro", "gemini", "espeak"] | None = None  # None = fábrica antiga (usa `engine`)
+    voice_id: str | None = None  # None = voz padrão do provedor
+    language: str = "pt-BR"
+    style: str = Field("", max_length=300)  # instrução de entrega (só provedores com controle de estilo)
+    instructions: str = Field("", max_length=500)  # pedido original em linguagem natural (registro)
+    params: dict = Field(default_factory=dict)  # parâmetros específicos do provedor
+    fallback: bool = True  # indisponibilidade do provedor => Piper (registrado); falha em execução NÃO usa fallback
 
 
 class Editing(BaseModel):
@@ -50,6 +58,12 @@ LABELS = {
 }
 
 
+def voice_label(v: Voice) -> str:
+    names = {"piper": "Piper", "espeak": "eSpeak", "kokoro": "Kokoro", "gemini": "Gemini TTS"}
+    p = v.provider or v.engine
+    return names.get(p, p) + (f" · {v.voice_id}" if v.voice_id else "")
+
+
 def preview(c: FactoryConfig) -> list[dict]:
     freq = "Somente sob demanda" if not c.frequency_per_week else (
         f"{c.frequency_per_week:g} vez(es) por semana")
@@ -58,6 +72,6 @@ def preview(c: FactoryConfig) -> list[dict]:
     rows = [("Nome da fábrica", c.name), ("Tema", c.theme), ("Público", c.audience or "Geral"),
             ("Duração do vídeo", f"cerca de {c.video_minutes:g} minuto(s)"), ("Frequência", freq),
             ("Estilo narrativo", c.narrative_style or "Natural"), ("Estilo visual", c.visual_style or "Imagens reais relacionadas ao tema"),
-            ("Voz", f"{c.voice.description} ({'Piper' if c.voice.engine == 'piper' else 'eSpeak'})"),
+            ("Voz", f"{c.voice.description} ({voice_label(c.voice)})"),
             ("Edição", ", ".join(edit))]
     return [{"label": a, "value": b} for a, b in rows]

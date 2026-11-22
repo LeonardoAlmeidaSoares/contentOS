@@ -10,7 +10,8 @@ import subprocess
 import tempfile
 
 from app.core.config import settings
-from app.media import sources, tts
+from app.media import sources
+from app.voices import engines as _engines, service as voices
 from app.pipelines.registry import OutFile, Pipeline, Step, StepContext, StepResult, register
 from app.providers.adapters.base import TextRequest
 from app.studio.schemas import FactoryConfig
@@ -193,25 +194,62 @@ def images(ctx: StepContext) -> StepResult:
 
 
 # ---------------------------------------------------------------- 4. narração
+def _voice_plan(c: FactoryConfig, ctx) -> tuple[str, str, dict]:
+    """Define provedor/voz da narração. Indisponibilidade (não falha em execução) => Piper/eSpeak, registrado e visível no resultado."""
+    v = c.voice
+    provider, voice_id = voices.effective(v)
+    params = {"speed": v.speed, "pitch": v.pitch, "style": v.style}
+    engine = voices.ENGINES.get(provider)
+    why = None
+    if engine is None:
+        why = f"provedor de voz desconhecido: {provider}"
+    else:
+        ok, reason = engine.available()
+        if not ok:
+            why = reason
+        elif voice_id not in {x.id for x in engine.voices()}:
+            why = f"voz '{voice_id}' inexistente em {engine.label}"
+    if why is None:
+        return provider, voice_id, params
+    chain = [p for p in ("piper", "espeak") if p != provider]
+    legacy = v.provider is None  # fábricas antigas sempre tiveram fallback para eSpeak
+    if not (v.fallback or legacy):
+        raise StepError(f"voz da fábrica indisponível ({why}) e o fallback está desativado")
+    for p in chain:
+        ok, _ = voices.ENGINES[p].available()
+        if ok:
+            ctx.log(f"voz '{provider}/{voice_id}' indisponível ({why}); usando {p} como fallback", "warn")
+            ctx.fallback = {"requested": f"{provider}/{voice_id}", "reason": why}
+            return p, voices.default_voice(p), params
+    raise StepError(f"nenhum motor de voz disponível ({why})")
+
+
 def narration(ctx: StepContext) -> StepResult:
     c = _cfg(ctx)
-    files, entries, engine = [], [], None
-    voice = c.voice.model_dump()
-    with tempfile.TemporaryDirectory() as td:
-        for s in ctx.previous["scenes"]["scenes"]:
-            wav = os.path.join(td, f"{s['index']}.wav")
-            try:
-                engine = tts.synthesize(s["narration"], wav, voice)
-            except tts.TTSError as exc:
-                raise StepError(str(exc)) from None
-            dur = tts.wav_duration(wav)
-            fn = f"cena_{s['index']:03d}.wav"
-            data = open(wav, "rb").read()
-            files.append(OutFile(fn, "audio/wav", data, provider=f"tts-local:{engine}", meta={"size": len(data), "seconds": round(dur, 2)}))
-            entries.append({"index": s["index"], "key": f"runs/{ctx.run_id}/narration/{fn}", "seconds": dur})
+    ctx.fallback = None
+    provider, voice_id, params = _voice_plan(c, ctx)
+    files, entries, cost, tin, tout, model = [], [], 0.0, 0, 0, None
+    for s in ctx.previous["scenes"]["scenes"]:
+        try:
+            r = voices.synthesize(provider, voice_id, s["narration"], params, gateway=ctx.ai, key=ctx.ai_key(f"tts{s['index']}"))
+        except _engines.Unavailable as exc:
+            raise StepError(f"voz indisponível: {exc}") from None
+        except _engines.VoiceError as exc:  # nunca conclui sem áudio real; retry só para falhas transitórias
+            raise StepError(f"falha na narração (cena {s['index']}, {provider}): {exc}", retryable=exc.retryable) from None
+        cost += r.cost
+        model, tin, tout = r.model or model, tin + (r.input_tokens or 0), tout + (r.output_tokens or 0)
+        fn = f"cena_{s['index']:03d}.wav"
+        files.append(OutFile(fn, "audio/wav", r.wav, provider=f"tts:{provider}", model=voice_id,
+                             meta={"size": len(r.wav), "seconds": round(r.seconds, 2)}))
+        entries.append({"index": s["index"], "key": f"runs/{ctx.run_id}/narration/{fn}", "seconds": r.seconds})
     total = sum(e["seconds"] for e in entries)
-    return StepResult({"audio": entries, "engine": engine, "seconds": total}, files=files,
-                      message=f"narração local ({engine}) de {total / 60:.1f} min")
+    out = {"audio": entries, "engine": provider, "voice": voice_id, "seconds": total, "model": model,
+           "style": params["style"] if voices.ENGINES[provider].controls.get("style") else None,
+           "input_tokens": tin or None, "output_tokens": tout or None, "cost": cost}
+    if ctx.fallback:
+        out["fallback"] = ctx.fallback
+    return StepResult(out, files=files,
+                      message=f"narração ({provider}/{voice_id}{', FALLBACK' if ctx.fallback else ''}) de {total / 60:.1f} min")
 
 
 # ---------------------------------------------------------------- 5. legendas
@@ -372,7 +410,12 @@ def export(ctx: StepContext) -> StepResult:
     title, desc = ctx.previous["script"]["title"], ctx.previous["script"]["description"]
     meta = {"title": title, "description": desc, "duration_seconds": round(dur, 2), "width": kinds["video"]["width"],
             "height": kinds["video"]["height"], "video_codec": kinds["video"]["codec_name"], "audio_codec": kinds["audio"]["codec_name"],
-            "script_source": ctx.previous["script"]["source"], "voice_engine": ctx.previous["narration"]["engine"],
+            "script_source": ctx.previous["script"]["source"], "voice_engine": ctx.previous["narration"]["engine"], "voice": ctx.previous["narration"].get("voice"),
+            "voice_model": ctx.previous["narration"].get("model"), "voice_style": ctx.previous["narration"].get("style"),
+            "narration_seconds": round(ctx.previous["narration"]["seconds"], 2),
+            "narration_tokens": [ctx.previous["narration"].get("input_tokens"), ctx.previous["narration"].get("output_tokens")],
+            "narration_cost_usd": ctx.previous["narration"].get("cost"),
+            "voice_fallback": ctx.previous["narration"].get("fallback"),
             "scenes": len(ctx.previous["scenes"]["scenes"]), "scenes_without_image": ctx.previous["images"]["missing"],
             "credits": credits if c.editing.credits else []}
     mb = json.dumps(meta, ensure_ascii=False, indent=2).encode()

@@ -42,7 +42,7 @@ class AIUsage(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id"), index=True)
     model: Mapped[str] = mapped_column(String(120))
-    capability: Mapped[str] = mapped_column(String(16))  # text|image
+    capability: Mapped[str] = mapped_column(String(16))  # text|image|speech
     scope: Mapped[str] = mapped_column(String(8), default="line")  # line|lab
     line_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     run_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
