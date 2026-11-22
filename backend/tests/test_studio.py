@@ -145,3 +145,26 @@ def test_video_pipeline_produces_valid_mp4(studio, monkeypatch, tmp_path):
     meta = json.loads(studio.storage.get(next(a for a in run["artifacts"] if a["filename"] == "metadados.json") and
                                          f"runs/{run['id']}/export/metadados.json"))
     assert meta["scenes_without_image"] == 1 and meta["script_source"] == "user" and run["cost"] == 0
+
+
+def test_find_image_never_repeats_same_file_across_scenes(monkeypatch):
+    """Regressão: 'used' guardava a URL da página e a checagem comparava a URL de download → mesma foto em todas as cenas."""
+    import httpx
+    from app.media import sources
+
+    pages = {str(i): {"index": i, "title": f"File:f{i}.jpg", "imageinfo": [{
+        "thumburl": f"https://img.test/f{i}.jpg", "descriptionurl": f"https://commons.test/File:f{i}.jpg",
+        "mime": "image/jpeg", "width": 2000, "height": 1200, "extmetadata": {"LicenseShortName": {"value": "CC BY 4.0"}}}]}
+        for i in (1, 2, 3)}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if "api.php" in req.url.path:
+            return httpx.Response(200, json={"query": {"pages": pages}})
+        return httpx.Response(200, content=req.url.path.encode())
+
+    monkeypatch.setattr(sources.settings, "pexels_api_key", "")
+    sources.set_client_factory(lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    used: set[str] = set()
+    got = [sources.find_image(["q"], used, "wikimedia")[0] for _ in range(3)]
+    assert len({g.data for g in got}) == 3
+    assert sources.find_image(["q"], used, "wikimedia")[0] is None

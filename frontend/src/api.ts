@@ -12,6 +12,7 @@ export type RunSummary = {
   id: string; line_id: string | null; line_name: string | null; pipeline: string; trigger: string; status: string;
   error: string | null; cost: number; cancel_requested: boolean;
   created_at: string; started_at: string | null; finished_at: string | null; steps_total: number; steps_done: number;
+  standard_id?: string | null; standard_version?: number | null; format?: string | null;
 };
 export type Run = RunSummary & { steps: Step[]; artifacts: Artifact[] };
 export type RunLog = { step_name: string | null; level: string; message: string; created_at: string };
@@ -31,13 +32,14 @@ export type StudioStatus = {
   voice: { engines: string[] }; ffmpeg: boolean;
 };
 export type PreviewRow = { label: string; value: string };
-export type Proposal = { config: Record<string, unknown>; preview: PreviewRow[] };
+export type Proposal = { config: Record<string, unknown>; preview: PreviewRow[]; assumed?: string[] };
 export type ChatReply = { status: "need_info" | "ready"; message: string; questions: string[]; proposal: Proposal | null; usage: { input_tokens: number | null; output_tokens: number | null; cost: number } };
 export type ChatMsg = { role: "user" | "assistant"; content: string };
 export type FactoryDetail = { id: string; config: Record<string, unknown>; preview: PreviewRow[]; active: boolean; interval_minutes: number | null };
 export type Publication = { id: string; status: string; title: string; privacy: string; channel_title: string | null; video_id: string | null; url: string | null; error: string | null; created_at: string; finished_at: string | null; progress: number };
 export type ReviewStatus = "pending" | "approved" | "changes_requested" | "rejected";
 export type ApprovalItem = {
+  standard_version?: number | null; format?: string | null;
   run_id: string; factory_id: string | null; factory_name: string | null; title: string; duration_seconds: number | null; created_at: string;
   video_artifact_id: string | null; thumbnail_artifact_id: string | null;
   review: { status: ReviewStatus; note: string; decided_at: string | null }; publication: Publication | null;
@@ -136,6 +138,7 @@ export const api = {
   studioStatus: () => get<StudioStatus>("/api/studio/status"),
   chat: (messages: ChatMsg[]) => post<ChatReply>("/api/studio/chat", { messages }),
   createFactory: (config: Record<string, unknown>) => post<{ id: string }>("/api/studio/factories", { config }),
+  createChannel: (config: Record<string, unknown>, pending: string[], origin: "chat" | "manual") => post<{ id: string }>("/api/studio/channels", { config, pending, origin }),
   factory: (id: string) => get<FactoryDetail>(`/api/studio/factories/${id}`),
   adjustFactory: (id: string, instruction: string) => post<ChatReply>(`/api/studio/factories/${id}/adjust`, { instruction }),
   applyFactory: (id: string, config: Record<string, unknown>) => call<FactoryDetail>("PUT", `/api/studio/factories/${id}`, { config }),

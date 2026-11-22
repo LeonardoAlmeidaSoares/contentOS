@@ -56,6 +56,14 @@ class ImageRequest:
 
 
 @dataclass
+class SpeechRequest:
+    text: str
+    voice: str
+    style: str | None = None  # instrução de entrega em linguagem natural (só provedores que suportam)
+    language: str = "pt-BR"
+
+
+@dataclass
 class Estimate:
     cost: Decimal | None  # None = não é possível determinar/limitar previamente
     basis: str
@@ -72,6 +80,7 @@ class ImageOut:
 class AIResult:
     model: str
     text: str | None = None
+    audio: bytes | None = None  # WAV completo (capacidade "speech")
     images: list[ImageOut] = field(default_factory=list)
     input_tokens: int | None = None
     output_tokens: int | None = None
@@ -131,6 +140,9 @@ class Adapter:
 
     def image(self, conn: Conn, model: str, req: ImageRequest, mcfg: dict) -> AIResult:
         raise ProviderError("geração de imagem não suportada por este provedor")
+
+    def speech(self, conn: Conn, model: str, req: SpeechRequest, mcfg: dict) -> AIResult:
+        raise ProviderError("síntese de voz não suportada por este provedor")
 
 
 def token_text_estimate(mcfg: dict, req: TextRequest) -> Estimate:

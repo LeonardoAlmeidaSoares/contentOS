@@ -55,7 +55,7 @@ def schedule_next(line: ProductionLine, base: datetime | None = None) -> None:
 
 
 def start_run(db: Session, line: ProductionLine, trigger: str = "manual", overrides: dict | None = None,
-              require_active: bool = True) -> Run:
+              require_active: bool = True, base_config: dict | None = None, standard: tuple[str, int] | None = None) -> Run:
     if line.archived_at is not None:
         raise Conflict("linha arquivada")
     if require_active and not line.active:
@@ -63,7 +63,31 @@ def start_run(db: Session, line: ProductionLine, trigger: str = "manual", overri
     if line.cost_limit_month is not None and month_cost(db, line.id) >= line.cost_limit_month:
         raise Conflict("limite de custo mensal atingido")
     pipeline = PIPELINES[line.pipeline]
-    run = Run(line_id=line.id, pipeline=line.pipeline, trigger=trigger, config={**line.config, **(overrides or {})})
+    if line.pipeline == "video_youtube":
+        from app.studio.models import ChannelStandard
+        versioned = db.scalar(select(ChannelStandard.id).where(ChannelStandard.line_id == line.id).limit(1))
+        if versioned:
+            if trigger == "schedule":
+                raise Conflict("produção automática de canais versionados ainda não está disponível; produza pela fábrica")
+            if standard is None:
+                raise Conflict("esta fábrica usa Padrão do Canal; escolha o formato e produza pela fábrica")
+            chosen = db.get(ChannelStandard, standard[0])
+            allowed = ("proposed", "approved") if trigger == "pilot" else ("approved",)
+            if not chosen or chosen.line_id != line.id or chosen.version != standard[1] or chosen.status not in allowed:
+                raise Conflict("o padrão informado não está disponível para esta produção")
+            from app.studio.schemas import FactoryConfig
+            approved = FactoryConfig.model_validate(chosen.config)
+            fmt = (overrides or {}).get("format")
+            if not any(f.enabled and f.id == fmt for f in approved.formats):
+                raise Conflict("escolha um formato habilitado no padrão criativo")
+            base_config = chosen.config
+            overrides = {k: v for k, v in (overrides or {}).items() if k in ("topic", "script_text", "format")}
+            overrides.update(standard_id=chosen.id, standard_version=chosen.version, pilot=trigger == "pilot")
+        elif standard is not None:
+            raise Conflict("o padrão não pertence a esta fábrica")
+    cfg = {**(base_config if base_config is not None else line.config), **(overrides or {})}
+    run = Run(line_id=line.id, pipeline=line.pipeline, trigger=trigger, config=cfg, format=cfg.get("format") or None,
+              standard_id=standard[0] if standard else None, standard_version=standard[1] if standard else None)
     run.steps = [RunStep(position=i, name=s.name) for i, s in enumerate(pipeline.steps, start=1)]
     line.last_run_at = now()
     db.add(run)

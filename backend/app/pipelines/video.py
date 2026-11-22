@@ -10,7 +10,8 @@ import subprocess
 import tempfile
 
 from app.core.config import settings
-from app.media import sources, tts
+from app.media import sources
+from app.voices import engines as _engines, service as voices
 from app.pipelines.registry import OutFile, Pipeline, Step, StepContext, StepResult, register
 from app.providers.adapters.base import TextRequest
 from app.studio.schemas import FactoryConfig
@@ -60,6 +61,26 @@ def _words(t: str) -> int:
 
 
 # ---------------------------------------------------------------- 1. roteiro
+def _identity(c: FactoryConfig) -> str:
+    """Identidade do canal passada ao modelo: a IA decide o *como*, nunca substitui estas decisões."""
+    t = c.target()
+    parts = [f"Fábrica: {c.name}.", f"Canal: {c.channel_name or c.name}." if c.channel_name else "",
+             f"Nicho: {c.niche}." if c.niche else "", f"Tema do canal: {c.theme}.", f"Público: {c.audience or 'geral'}.",
+             f"Idioma obrigatório: {c.language}.", f"Tom: {c.tone}." if c.tone else "",
+             f"Estilo narrativo: {c.narrative_style or 'natural'}.", f"Estilo visual: {c.visual_style or 'realista'}.",
+             f"Referências criativas: {c.references}." if c.references else "",
+             f"RESTRIÇÕES EDITORIAIS (obrigatórias): {c.restrictions}." if c.restrictions else "",
+             f"Termos PROIBIDOS (nunca use): {', '.join(c.forbidden_terms)}." if c.forbidden_terms else "",
+             (f"Formato: {'vídeo vertical curto (Shorts/Reels)' if t.id == 'vertical' else 'vídeo horizontal'}; a narração deve durar "
+              f"entre {t.min_seconds} e {t.max_seconds} segundos.") if t else ""]
+    return " ".join(p for p in parts if p)
+
+
+def _forbidden(c: FactoryConfig, text: str) -> None:
+    hits = sorted({t for t in c.forbidden_terms if t.strip() and re.search(rf"(?<!\w){re.escape(t.strip())}(?!\w)", text, re.I)})
+    if hits:
+        raise StepError("o roteiro contém termos proibidos pelo padrão do canal: " + ", ".join(hits))
+
 SCRIPT_SYS = ("Você é roteirista de vídeos de YouTube em português do Brasil. Responda SOMENTE com JSON válido. "
               "Narração falada em primeira pessoa do narrador, sem rubricas, sem emojis, sem marcações de cena, "
               "sem números por extenso errados, frases curtas e claras para leitura em voz alta.")
@@ -69,14 +90,14 @@ def script(ctx: StepContext) -> StepResult:
     c = _cfg(ctx)
     if c.script_text.strip():
         title = c.topic or c.script_text.strip().splitlines()[0][:100]
+        _forbidden(c, c.script_text)
         ctx.log("usando roteiro fornecido pelo usuário (sem chamada de IA)")
         return StepResult({"title": title, "description": c.topic or title, "source": "user",
                            "sections": [{"heading": "", "text": c.script_text.strip()}]},
                           message="roteiro fornecido")
-    total_words = int(c.video_minutes * WPM)
+    total_words = int(c.minutes() * WPM)
     n = max(1, min(MAX_SECTIONS, math.ceil(total_words / 260)))
-    identity = (f"Fábrica: {c.name}. Tema do canal: {c.theme}. Público: {c.audience or 'geral'}. "
-                f"Estilo narrativo: {c.narrative_style or 'natural'}. Estilo visual: {c.visual_style or 'realista'}.")
+    identity = _identity(c)
     topic_line = (f"Tema do vídeo: {c.topic}." if c.topic else
                   "Escolha você um tema de vídeo original, específico e interessante dentro do tema do canal.")
     outline = _ask(ctx, "outline", SCRIPT_SYS,
@@ -106,6 +127,7 @@ def script(ctx: StepContext) -> StepResult:
              "query_alt": str(s.get("query_alt", "")).strip()} for s in scenes]})
         prev_tail = " ".join(done[-1]["scenes"][-1]["narration"].split()[-25:])
     words = sum(_words(s["narration"]) for d in done for s in d["scenes"])
+    _forbidden(c, " ".join(str(outline["title"]).split() + [s["narration"] for d in done for s in d["scenes"]]))
     return StepResult({"title": str(outline["title"])[:120], "description": str(outline.get("description", ""))[:1000],
                        "source": "gemini", "sections": done, "words": words},
                       message=f"roteiro com {words} palavras em {len(done)} seção(ões)")
@@ -193,25 +215,69 @@ def images(ctx: StepContext) -> StepResult:
 
 
 # ---------------------------------------------------------------- 4. narração
+def _voice_plan(c: FactoryConfig, ctx) -> tuple[str, str, dict]:
+    """Define provedor/voz da narração. Indisponibilidade (não falha em execução) => Piper/eSpeak, registrado e visível no resultado."""
+    v = c.voice
+    if v.language.lower() != c.language.lower():
+        raise StepError(f"o idioma da voz ({v.language}) difere do idioma do canal ({c.language}); a produção não foi iniciada com outra voz")
+    provider, voice_id = voices.effective(v)
+    params = {"speed": v.speed, "pitch": v.pitch, "style": v.style}
+    engine = voices.ENGINES.get(provider)
+    why = None
+    if engine is None:
+        why = f"provedor de voz desconhecido: {provider}"
+    else:
+        ok, reason = engine.available()
+        if not ok:
+            why = reason
+        elif voice_id not in {x.id for x in engine.voices()}:
+            why = f"voz '{voice_id}' inexistente em {engine.label}"
+    if why is None:
+        return provider, voice_id, params
+    chain = [p for p in ("piper", "espeak") if p != provider]
+    legacy = v.provider is None  # fábricas antigas sempre tiveram fallback para eSpeak
+    if not (v.fallback or legacy):
+        raise StepError(f"voz da fábrica indisponível ({why}) e o fallback está desativado")
+    for p in chain:
+        ok, _ = voices.ENGINES[p].available()
+        if ok:
+            ctx.log(f"voz '{provider}/{voice_id}' indisponível ({why}); usando {p} como fallback", "warn")
+            ctx.fallback = {"requested": f"{provider}/{voice_id}", "reason": why}
+            return p, voices.default_voice(p), params
+    raise StepError(f"nenhum motor de voz disponível ({why})")
+
+
 def narration(ctx: StepContext) -> StepResult:
     c = _cfg(ctx)
-    files, entries, engine = [], [], None
-    voice = c.voice.model_dump()
-    with tempfile.TemporaryDirectory() as td:
-        for s in ctx.previous["scenes"]["scenes"]:
-            wav = os.path.join(td, f"{s['index']}.wav")
-            try:
-                engine = tts.synthesize(s["narration"], wav, voice)
-            except tts.TTSError as exc:
-                raise StepError(str(exc)) from None
-            dur = tts.wav_duration(wav)
-            fn = f"cena_{s['index']:03d}.wav"
-            data = open(wav, "rb").read()
-            files.append(OutFile(fn, "audio/wav", data, provider=f"tts-local:{engine}", meta={"size": len(data), "seconds": round(dur, 2)}))
-            entries.append({"index": s["index"], "key": f"runs/{ctx.run_id}/narration/{fn}", "seconds": dur})
+    ctx.fallback = None
+    provider, voice_id, params = _voice_plan(c, ctx)
+    files, entries, cost, tin, tout, model = [], [], 0.0, 0, 0, None
+    for s in ctx.previous["scenes"]["scenes"]:
+        try:
+            r = voices.synthesize(provider, voice_id, s["narration"], params, gateway=ctx.ai, key=ctx.ai_key(f"tts{s['index']}"))
+        except _engines.Unavailable as exc:
+            raise StepError(f"voz indisponível: {exc}") from None
+        except _engines.VoiceError as exc:  # nunca conclui sem áudio real; retry só para falhas transitórias
+            raise StepError(f"falha na narração (cena {s['index']}, {provider}): {exc}", retryable=exc.retryable) from None
+        cost += r.cost
+        model, tin, tout = r.model or model, tin + (r.input_tokens or 0), tout + (r.output_tokens or 0)
+        fn = f"cena_{s['index']:03d}.wav"
+        files.append(OutFile(fn, "audio/wav", r.wav, provider=f"tts:{provider}", model=voice_id,
+                             meta={"size": len(r.wav), "seconds": round(r.seconds, 2)}))
+        entries.append({"index": s["index"], "key": f"runs/{ctx.run_id}/narration/{fn}", "seconds": r.seconds})
     total = sum(e["seconds"] for e in entries)
-    return StepResult({"audio": entries, "engine": engine, "seconds": total}, files=files,
-                      message=f"narração local ({engine}) de {total / 60:.1f} min")
+    t = c.target()
+    est = total + GAP * len(entries)
+    if t and not (t.min_seconds <= est <= t.max_seconds):  # falha controlada antes de gastar tempo de montagem
+        raise StepError(f"a narração ({est:.0f}s) ficou fora da faixa do formato {t.id} ({t.min_seconds}–{t.max_seconds}s) definida no "
+                        f"padrão do canal; ajuste a pauta/roteiro ou a faixa de duração")
+    out = {"audio": entries, "engine": provider, "voice": voice_id, "seconds": total, "model": model,
+           "style": params["style"] if voices.ENGINES[provider].controls.get("style") else None,
+           "input_tokens": tin or None, "output_tokens": tout or None, "cost": cost}
+    if ctx.fallback:
+        out["fallback"] = ctx.fallback
+    return StepResult(out, files=files,
+                      message=f"narração ({provider}/{voice_id}{', FALLBACK' if ctx.fallback else ''}) de {total / 60:.1f} min")
 
 
 # ---------------------------------------------------------------- 5. legendas
@@ -255,20 +321,22 @@ def _wrap(text: str, width=42) -> list[str]:
 def subtitles(ctx: StepContext) -> StepResult:
     c = _cfg(ctx)
     sc, au = ctx.previous["scenes"]["scenes"], {a["index"]: a["seconds"] for a in ctx.previous["narration"]["audio"]}
-    h = 720 if c.editing.resolution == "720p" else 1080
+    W, h = c.dims()
+    vertical = h > W
+    cw = 26 if vertical else 42  # largura de linha da legenda (caracteres)
     caps, t = [], 0.0
     for s in sc:
         d = au[s["index"]]
-        caps += captions(s["narration"], t, d)
+        caps += captions(s["narration"], t, d, max_chars=cw)
         t += d + GAP
-    srt = "\n".join(f"{i}\n{_ts(a)} --> {_ts(b)}\n" + "\n".join(_wrap(x)) + "\n" for i, (a, b, x) in enumerate(caps, 1))
+    srt = "\n".join(f"{i}\n{_ts(a)} --> {_ts(b)}\n" + "\n".join(_wrap(x, cw)) + "\n" for i, (a, b, x) in enumerate(caps, 1))
     ass = ("[Script Info]\nScriptType: v4.00+\nPlayResX: %d\nPlayResY: %d\nWrapStyle: 2\n\n[V4+ Styles]\n"
            "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,"
            "ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\n"
            "Style: Default,DejaVu Sans,%d,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2.5,1,2,60,60,%d,1\n\n"
            "[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n") % (
-        h * 16 // 9, h, round(h * 0.05), round(h * 0.07))
-    ass += "".join(f"Dialogue: 0,{_ts(a, True)},{_ts(b, True)},Default,,0,0,0,," + r"\N".join(_wrap(x)) + "\n" for a, b, x in caps)
+        W, h, round(min(W, h) * 0.05 * (0.9 if vertical else 1)), round(h * (0.12 if vertical else 0.07)))
+    ass += "".join(f"Dialogue: 0,{_ts(a, True)},{_ts(b, True)},Default,,0,0,0,," + r"\N".join(_wrap(x, cw)) + "\n" for a, b, x in caps)
     srt_b, ass_b = srt.encode(), ass.encode()
     return StepResult({"captions": len(caps), "ass_key": f"runs/{ctx.run_id}/subtitles/legendas.ass", "seconds": t},
                       files=[OutFile("legendas.srt", "application/x-subrip", srt_b, meta={"size": len(srt_b)}),
@@ -285,7 +353,7 @@ def _run(cmd: list[str], what: str, cwd: str | None = None) -> None:
 
 def render(ctx: StepContext) -> StepResult:
     c = _cfg(ctx)
-    W, H = (1280, 720) if c.editing.resolution == "720p" else (1920, 1080)
+    W, H = c.dims()
     FPS = 25
     imgs = {e["index"]: e for e in ctx.previous["images"]["images"]}
     aud = {a["index"]: a for a in ctx.previous["narration"]["audio"]}
@@ -308,7 +376,9 @@ def render(ctx: StepContext) -> StepResult:
                           f"zoompan=z='{z}':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:fps={FPS},format=yuv420p")
                 else:
                     vf = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS},format=yuv420p"
-                vin = ["-i", img]
+                # zoompan expands one image into all frames. A static image must
+                # instead loop for the entire narration, or FFmpeg stops early.
+                vin = ["-i", img] if c.editing.ken_burns else ["-loop", "1", "-framerate", str(FPS), "-i", img]
             else:
                 vin, vf = ["-f", "lavfi", "-i", f"color=c=0x0b2530:s={W}x{H}:r={FPS}"], "format=yuv420p"
             _run(["ffmpeg", "-y", *vin, "-i", wav, "-vf", vf, "-af", "apad", "-frames:v", str(frames), "-t", f"{dur:.3f}",
@@ -346,6 +416,42 @@ def _probe(path: str) -> dict:
     return json.loads(r.stdout)
 
 
+def _mean_volume(path: str) -> float | None:
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-i", path, "-vn", "-af", "volumedetect", "-f", "null", "-"],
+                       capture_output=True, timeout=600)
+    m = re.search(r"mean_volume:\s*(-?[\d.]+) dB", r.stderr.decode(errors="ignore"))
+    return float(m.group(1)) if m else None
+
+
+def validate_output(c: FactoryConfig, kinds: dict, dur: float, narr: dict, volume: float | None) -> dict:
+    """Confere o arquivo final contra o padrão do canal. Qualquer divergência => a produção NÃO é considerada concluída."""
+    W, H = c.dims()
+    t = c.target()
+    v, checks = kinds["video"], []
+
+    def chk(name, ok, detail):
+        checks.append({"name": name, "ok": bool(ok), "detail": detail})
+
+    chk("resolução", (v["width"], v["height"]) == (W, H), f"{v['width']}x{v['height']} (esperado {W}x{H})")
+    fmt = t.id if t else "horizontal"
+    chk("proporção", abs(v["width"] / v["height"] - W / H) < 0.01, f"{'9:16' if fmt == 'vertical' else '16:9'} esperado ({fmt})")
+    if t:
+        chk("duração na faixa do formato", t.min_seconds <= dur <= t.max_seconds, f"{dur:.1f}s (faixa {t.min_seconds}–{t.max_seconds}s)")
+    chk("áudio presente", "audio" in kinds and volume is not None and volume > -50,
+        f"média {volume:.1f} dB" if volume is not None else "sem trilha de áudio mensurável")
+    if c.standard_id:
+        exp = voices.effective(c.voice)
+        got = (narr.get("engine"), narr.get("voice"))
+        fb = narr.get("fallback")
+        chk("voz do padrão", got == exp or (bool(fb) and c.voice.fallback),
+            f"usada {got[0]}/{got[1]}; padrão {exp[0]}/{exp[1]}" + (" (fallback autorizado)" if fb else ""))
+        chk("idioma da voz", c.voice.language.lower() == c.language.lower(), f"{c.voice.language} / canal {c.language}")
+    return {"ok": all(x["ok"] for x in checks), "checks": checks, "expected": {"format": fmt, "width": W, "height": H,
+            "min_seconds": t.min_seconds if t else None, "max_seconds": t.max_seconds if t else None},
+            "actual": {"width": v["width"], "height": v["height"], "duration_seconds": round(dur, 2), "mean_volume_db": volume},
+            "standard": {"id": c.standard_id, "version": c.standard_version}}
+
+
 def export(ctx: StepContext) -> StepResult:
     c = _cfg(ctx)
     with tempfile.TemporaryDirectory() as td:
@@ -359,6 +465,10 @@ def export(ctx: StepContext) -> StepResult:
             raise StepError("vídeo inválido: faltam trilhas H.264/áudio")
         if dur < 1 or abs(dur - expect) > max(3.0, expect * 0.03):
             raise StepError(f"duração do vídeo ({dur:.1f}s) diverge da narração ({expect:.1f}s)")
+        validation = validate_output(c, kinds, dur, ctx.previous["narration"], _mean_volume(path))
+        if not validation["ok"]:
+            raise StepError("o vídeo gerado não atende ao padrão do canal: " + "; ".join(
+                f"{x['name']} ({x['detail']})" for x in validation["checks"] if not x["ok"]))
         thumb = os.path.join(td, "t.jpg")
         _run(["ffmpeg", "-y", "-ss", str(min(2.0, dur / 2)), "-i", path, "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "4", thumb],
              "miniatura")
@@ -370,13 +480,20 @@ def export(ctx: StepContext) -> StepResult:
             seen.add(e["url"])
             credits.append(f"{e['title']} — {e['author'] or 'autor desconhecido'} ({e['license']}, {e['source']}): {e['url']}")
     title, desc = ctx.previous["script"]["title"], ctx.previous["script"]["description"]
-    meta = {"title": title, "description": desc, "duration_seconds": round(dur, 2), "width": kinds["video"]["width"],
+    meta = {"standard_id": c.standard_id, "standard_version": c.standard_version, "format": c.format or None,
+            "channel": c.channel_name or c.name, "validation": validation, "pilot": c.pilot, "title": title, "description": desc, "duration_seconds": round(dur, 2), "width": kinds["video"]["width"],
             "height": kinds["video"]["height"], "video_codec": kinds["video"]["codec_name"], "audio_codec": kinds["audio"]["codec_name"],
-            "script_source": ctx.previous["script"]["source"], "voice_engine": ctx.previous["narration"]["engine"],
+            "script_source": ctx.previous["script"]["source"], "voice_engine": ctx.previous["narration"]["engine"], "voice": ctx.previous["narration"].get("voice"),
+            "voice_model": ctx.previous["narration"].get("model"), "voice_style": ctx.previous["narration"].get("style"),
+            "narration_seconds": round(ctx.previous["narration"]["seconds"], 2),
+            "narration_tokens": [ctx.previous["narration"].get("input_tokens"), ctx.previous["narration"].get("output_tokens")],
+            "narration_cost_usd": ctx.previous["narration"].get("cost"),
+            "voice_fallback": ctx.previous["narration"].get("fallback"),
             "scenes": len(ctx.previous["scenes"]["scenes"]), "scenes_without_image": ctx.previous["images"]["missing"],
             "credits": credits if c.editing.credits else []}
     mb = json.dumps(meta, ensure_ascii=False, indent=2).encode()
-    return StepResult({"title": title, "duration_seconds": round(dur, 2), "valid": True, "credits": len(credits)},
+    return StepResult({"title": title, "duration_seconds": round(dur, 2), "valid": True, "credits": len(credits),
+                       "validation": validation, "standard_version": c.standard_version, "format": c.format or None},
                       files=[OutFile("miniatura.jpg", "image/jpeg", tdata, meta={"size": len(tdata)}),
                              OutFile("metadados.json", "application/json", mb, meta={"size": len(mb)})],
                       message=f"MP4 válido: {dur:.0f}s, {kinds['video']['width']}x{kinds['video']['height']}")
